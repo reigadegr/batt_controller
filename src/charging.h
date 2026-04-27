@@ -54,6 +54,12 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms);
 int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters);
 
 /*
+ * dumpsys 电池控制序列
+ * fork+execvp 执行: battery set ac 1, battery set status 2, battery reset
+ */
+void charging_dumpsys_reset(void);
+
+/*
  * 充电控制主循环 (在子线程中运行)
  * fds: 已打开的 sysfs fd 集合
  * cfg: 配置

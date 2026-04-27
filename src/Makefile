@@ -2,7 +2,7 @@ CC      = cc
 CFLAGS  = -Wall -Wextra -Werror -O2 -std=c11
 LDFLAGS = -lpthread
 
-SRCS = main.c config.c sysfs.c charging.c monitor.c
+SRCS = main.c config.c sysfs.c charging.c monitor.c cli.c
 OBJS = $(SRCS:.c=.o)
 BIN  = payload
 
@@ -20,8 +20,9 @@ clean:
 	rm -f $(OBJS) $(BIN)
 
 # 依赖关系
-main.o:     config.h sysfs.h charging.h monitor.h
+main.o:     config.h sysfs.h charging.h monitor.h cli.h
 config.o:   config.h
 sysfs.o:    sysfs.h
 charging.o: charging.h sysfs.h config.h
 monitor.o:  monitor.h sysfs.h config.h
+cli.o:      cli.h config.h sysfs.h

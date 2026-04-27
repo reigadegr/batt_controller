@@ -16,6 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "cli.h"
 #include "config.h"
 #include "charging.h"
 #include "monitor.h"
@@ -50,58 +51,59 @@ static void sighandler(int sig)
     g_state.charging_active = 0;
 }
 
+static void load_config(BattConfig *cfg)
+{
+    if (config_parse(CONFIG_PATH, cfg) < 0) {
+        memset(cfg, 0, sizeof(*cfg));
+        cfg->enabled = 1;
+        cfg->adjust_step = 50;
+        cfg->inc_step = 100;
+        cfg->dec_step = 100;
+        cfg->ufcs_max = 9100;
+        cfg->pps_max = 5000;
+        cfg->loop_interval_ms = 2000;
+    }
+}
+
 int main(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    CliArgs cli;
+    if (cli_parse(argc, argv, &cli) < 0)
+        return 1;
 
-    /* 初始化共享状态 */
+    /* 一次性命令模式: 执行后直接退出 */
+    if (cli.mode != CLI_MODE_SERVICE) {
+        BattConfig cfg;
+        load_config(&cfg);
+        return cli_exec(&cli, &cfg);
+    }
+
+    /* 服务模式 */
     memset(&g_state, 0, sizeof(g_state));
     g_state.running = 1;
 
-    /* 注册信号处理 */
     signal(SIGINT,  sighandler);
     signal(SIGTERM, sighandler);
     signal(SIGPIPE, SIG_IGN);
 
-    /* 解析配置文件 */
-    if (config_parse(CONFIG_PATH, &g_state.config) < 0) {
-        /* 配置文件不可读时使用默认值 */
-        memset(&g_state.config, 0, sizeof(g_state.config));
-        g_state.config.enabled = 1;
-        g_state.config.adjust_step = 50;
-        g_state.config.inc_step = 100;
-        g_state.config.dec_step = 100;
-        g_state.config.ufcs_max = 9100;
-        g_state.config.pps_max = 5000;
-        g_state.config.loop_interval_ms = 2000;
-    }
-
-    /* 打印配置 (复现原始输出) */
+    load_config(&g_state.config);
     config_dump(&g_state.config);
 
-    /* 创建 3 个线程 */
     pthread_t tid_usb, tid_charging, tid_battery;
 
-    /* Thread 1: USB 在线监控 */
     if (pthread_create(&tid_usb, NULL, monitor_usb_thread, &g_state) != 0) {
         perror("pthread_create usb_monitor");
         return 1;
     }
-
-    /* Thread 2: 充电控制 */
     if (pthread_create(&tid_charging, NULL, charging_thread_wrapper, &g_state) != 0) {
         perror("pthread_create charging");
         return 1;
     }
-
-    /* Thread 3: 电池日志 */
     if (pthread_create(&tid_battery, NULL, monitor_battery_log_thread, &g_state) != 0) {
         perror("pthread_create battery_log");
         return 1;
     }
 
-    /* 主线程等待所有子线程 (复现 strace 中的 futex wait) */
     pthread_join(tid_usb, NULL);
     pthread_join(tid_charging, NULL);
     pthread_join(tid_battery, NULL);
