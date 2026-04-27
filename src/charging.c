@@ -149,7 +149,8 @@ void charging_dumpsys_reset(SysfsFds *fds)
     run_dumpsys("set", "status", "2");
     run_dumpsys("reset", NULL, NULL);
 
-    /* strace 确认: dumpsys 后写 mmi_charging_enable 0→1, 间隔 1s */
+    /* strace 确认: dumpsys reset 后 sleep(2s), 然后 mmi_charging_enable 0→1 */
+    sleep(2);
     sysfs_write_str(fds->mmi_charging_enable, "0");
     sleep(1);
     sysfs_write_str(fds->mmi_charging_enable, "1");

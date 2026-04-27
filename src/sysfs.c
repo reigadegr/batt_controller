@@ -35,7 +35,7 @@ int sysfs_open_all(SysfsFds *fds)
     fds->usb_online          = open_ro(PATH_USB_ONLINE);
     fds->battery_temp        = open_ro(PATH_BATTERY_TEMP);
     fds->chip_soc            = open_ro(PATH_CHIP_SOC);
-    fds->ufcs_status         = open_ro(PATH_UFCS_STATUS);
+    /* ufcs_status 用临时打开, 不持久持有 fd */
     fds->adapter_power       = open_ro(PATH_ADAPTER_POWER);
     fds->bcc_current         = open_wo(PATH_BCC_CURRENT);
     fds->mmi_charging_enable = open_wo(PATH_MMI_CHARGING);

@@ -9,7 +9,6 @@
  *   fd 3:  /sys/class/power_supply/usb/online          (R)
  *   fd 4:  /sys/class/power_supply/battery/temp        (R)
  *   fd 5:  /sys/class/oplus_chg/battery/chip_soc       (R)
- *   fd 6:  /proc/oplus-votable/UFCS_CURR/status        (R)
  *   fd 7:  /sys/class/oplus_chg/common/adapter_power   (R)
  *   fd 8:  /sys/class/oplus_chg/battery/bcc_current    (W)
  *   fd 9:  /sys/class/oplus_chg/battery/mmi_charging_enable (W)
@@ -17,6 +16,7 @@
  *   fd 11: /proc/oplus-votable/PPS_CURR/force_active   (W)
  *   fd 12: /proc/oplus-votable/UFCS_CURR/force_val     (W)
  *   fd 13: /proc/oplus-votable/UFCS_CURR/force_active  (W)
+ *   (UFCS_CURR/status 用临时打开 read_temp_file, fd 6 不持久持有)
  */
 
 /* sysfs/proc 文件描述符集合 */
@@ -24,7 +24,7 @@ typedef struct {
     int usb_online;              /* fd 3 */
     int battery_temp;            /* fd 4 */
     int chip_soc;                /* fd 5 */
-    int ufcs_status;             /* fd 6 */
+    /* ufcs_status 用临时打开 (read_temp_file), 不需要持久 fd */
     int adapter_power;           /* fd 7 */
     int bcc_current;             /* fd 8  (W) */
     int mmi_charging_enable;     /* fd 9  (W) */
