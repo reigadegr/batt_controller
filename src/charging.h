@@ -16,6 +16,15 @@
 #include "config.h"
 #include "sysfs.h"
 
+/* 充电阶段 */
+typedef enum {
+    PHASE_IDLE,     /* 未充电 */
+    PHASE_RISE,     /* 上升阶段: 电流递增 */
+    PHASE_CV,       /* 恒压阶段: 电压达标, 限流 */
+    PHASE_TC,       /* 涓流阶段: 高 SoC 低电流 */
+    PHASE_FULL,     /* 满电 */
+} ChargePhase;
+
 /* bcc_parms 解析结果 (19 个逗号分隔值) */
 typedef struct {
     int vbat_mv;           /* 电池电压 (mV) */
@@ -54,10 +63,11 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms);
 int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters);
 
 /*
- * dumpsys 电池控制序列
+ * 充电重置序列 (strace 确认)
  * fork+execvp 执行: battery set ac 1, battery set status 2, battery reset
+ * 然后: mmi_charging_enable 0 → sleep 1s → mmi_charging_enable 1 → sleep 8s
  */
-void charging_dumpsys_reset(void);
+void charging_dumpsys_reset(SysfsFds *fds);
 
 /*
  * 充电控制主循环 (在子线程中运行)

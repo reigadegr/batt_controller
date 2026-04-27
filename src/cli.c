@@ -7,6 +7,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "charging.h"
+
 /* 电池型号 profile 表 (15 个型号，来自 r2 逆向 .rodata) */
 static const struct {
     const char *name;
@@ -103,32 +105,6 @@ int cli_parse(int argc, char **argv, CliArgs *args)
         }
     }
     return 0;
-}
-
-/* fork+execvp 执行 dumpsys 命令 */
-static int run_dumpsys(const char *arg1, const char *arg2, const char *arg3)
-{
-    pid_t pid = fork();
-    if (pid < 0) return -1;
-
-    if (pid == 0) {
-        /* 子进程 */
-        const char *argv[5];
-        argv[0] = "dumpsys";
-        argv[1] = "battery";
-        int argc = 2;
-        if (arg1) argv[argc++] = arg1;
-        if (arg2) argv[argc++] = arg2;
-        if (arg3) argv[argc++] = arg3;
-        argv[argc] = NULL;
-        execvp("dumpsys", (char *const *)argv);
-        _exit(127);
-    }
-
-    /* 父进程等待 */
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
 /* 查找电池型号 profile */
@@ -236,12 +212,11 @@ int cli_exec(const CliArgs *args, const BattConfig *cfg)
         return ret;
     }
     case CLI_MODE_DUMPSYS: {
-        printf("dumpsys battery set ac 1\n");
-        run_dumpsys("set", "ac", "1");
-        printf("dumpsys battery set status 2\n");
-        run_dumpsys("set", "status", "2");
-        printf("dumpsys battery reset\n");
-        run_dumpsys("reset", NULL, NULL);
+        /* strace 确认的完整重置序列 */
+        if (sysfs_open_all(&fds) < 0) return -1;
+        charging_dumpsys_reset(&fds);
+        printf("dumpsys battery reset sequence complete\n");
+        sysfs_close_all(&fds);
         return 0;
     }
     case CLI_MODE_MODEL: {
