@@ -48,19 +48,19 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms)
 
     if (count < 12) return -1;
 
-    /* strace 确认: bcc_parms 19 字段无前导逗号, 从 [0] 开始 */
-    parms->vbat_mv       = fields[0];
-    parms->ibat_ma       = fields[1];
-    parms->temp_01c      = fields[2];
-    parms->fcc           = fields[3];
-    parms->rm            = fields[4];
-    parms->soh           = fields[5];
-    parms->vbus_mv       = fields[6];
-    parms->ibus_ma       = fields[7];
-    parms->power_mw      = fields[8];
-    parms->cycles        = fields[9];
-    parms->charge_status = fields[10];
-    parms->batt_vol      = fields[11];
+    /* strace 3130 次读取确认的真实字段映射 */
+    parms->fcc           = fields[0];   /* 满电容量 mAh (恒定 ~5896) */
+    parms->design_cap    = fields[1];   /* 设计容量 (恒定 ~5888) */
+    parms->ic_param_a    = fields[2];   /* 充电IC参数A (线性递减) */
+    parms->param_c       = fields[3];   /* 常量 ~2637 */
+    parms->param_d       = fields[4];   /* 常量 ~2621 */
+    parms->ic_param_b    = fields[5];   /* 充电IC参数B (= ic_param_a + 405) */
+    parms->vbus_mv       = fields[6];   /* 总线电压 mV */
+    parms->const_409     = fields[7];   /* 常量 409 */
+    parms->ibat_ma       = fields[8];   /* 电池电流 mA (负值=充电) */
+    parms->charge_budget = fields[9];   /* 充电预算 (91→0) */
+    parms->budget_sub    = fields[10];  /* = charge_budget - 11 */
+    parms->batt_vol      = fields[11];  /* 电池电压 mV */
 
     if (count >= 19) {
         parms->field_12     = fields[12];
@@ -241,10 +241,10 @@ static const char *phase_name(ChargePhase ph)
 static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
                                const BccParms *parms, int soc)
 {
-    int vbat = parms->vbat_mv;
+    int vbat = parms->batt_vol;
     int ibat = parms->ibat_ma < 0 ? -parms->ibat_ma : parms->ibat_ma;
 
-    if (parms->charge_status == 0)
+    if (parms->charge_budget == 0)
         return PHASE_IDLE;
 
     switch (cur) {
@@ -348,13 +348,13 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         /*
          * 充电周期结束检测:
-         * charge_status 从非零变为 0 时触发 dumpsys 重启
+         * charge_budget 从非零变为 0 时触发 dumpsys 重启
          * 需要先经过非零状态 (in_charge_cycle=1) 才触发
          */
-        if (parms.charge_status > 0)
+        if (parms.charge_budget > 0)
             in_charge_cycle = 1;
 
-        if (parms.charge_status == 0 && in_charge_cycle) {
+        if (parms.charge_budget == 0 && in_charge_cycle) {
             /* 重置所有 votable */
             sysfs_reset_votables(fds);
 
@@ -419,8 +419,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             continue;
         }
 
-        /* 温控: 根据温度调整最大电流 */
-        int temp_offset = get_temp_curr_offset(cfg, parms.temp_01c);
+        /* 温控: 根据温度调整最大电流 (注: ic_param_a 非温度, 仅为字段重命名, 算法修正另做) */
+        int temp_offset = get_temp_curr_offset(cfg, parms.ic_param_a);
         int effective_max = max_ma;
         if (temp_offset > 0 && effective_max > temp_offset)
             effective_max = temp_offset;
@@ -433,7 +433,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             snprintf(line, sizeof(line),
                      "%s ==== Phase %s -> %s (vbat=%dmV, soc=%d%%) ====\n",
                      ts, phase_name(phase), phase_name(new_phase),
-                     parms.vbat_mv, soc);
+                     parms.batt_vol, soc);
             log_write(line);
             phase = new_phase;
         }
@@ -453,12 +453,12 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             int step = inc_step;
 
             if (cfg->rise_quickstep_thr_mv > 0 &&
-                parms.vbat_mv >= cfg->rise_quickstep_thr_mv) {
+                parms.batt_vol >= cfg->rise_quickstep_thr_mv) {
                 /* 接近 CV 阈值, 减速 */
                 step = inc_step / 4;
                 if (step < 50) step = 50;
             } else if (cfg->rise_wait_thr_mv > 0 &&
-                       parms.vbat_mv >= cfg->rise_wait_thr_mv) {
+                       parms.batt_vol >= cfg->rise_wait_thr_mv) {
                 /* 更接近, 进一步减速 */
                 step = inc_step / 8;
                 if (step < 25) step = 25;
@@ -531,11 +531,11 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         /* 满电判断: batt_full_thr_mv 额外检查 */
         if (phase != PHASE_FULL && cfg->batt_full_thr_mv > 0 &&
-            parms.vbat_mv >= cfg->batt_full_thr_mv) {
+            parms.batt_vol >= cfg->batt_full_thr_mv) {
             get_timestamp(ts, sizeof(ts));
             snprintf(line, sizeof(line),
                      "%s ==== Battery full: vbat=%dmV >= batt_full_thr_mv=%dmV ====\n",
-                     ts, parms.vbat_mv, cfg->batt_full_thr_mv);
+                     ts, parms.batt_vol, cfg->batt_full_thr_mv);
             log_write(line);
             phase = PHASE_FULL;
         }

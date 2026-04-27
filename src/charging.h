@@ -26,26 +26,27 @@ typedef enum {
 } ChargePhase;
 
 /* bcc_parms 解析结果 (19 个逗号分隔值) */
+/* strace 3130 次读取确认的真实字段映射 */
 typedef struct {
-    int vbat_mv;           /* 电池电压 (mV) */
-    int ibat_ma;           /* 电池电流 (mA, 负值=充电) */
-    int temp_01c;          /* 温度 (0.1°C) */
-    int fcc;               /* 满电容量 */
-    int rm;                /* 剩余容量 */
-    int soh;               /* 健康度 */
-    int vbus_mv;           /* 总线电压 (mV) */
-    int ibus_ma;           /* 总线电流 (mA) */
-    int power_mw;          /* 功率 (mW) */
-    int cycles;            /* 循环次数 */
-    int charge_status;     /* 充电状态 */
-    int batt_vol;          /* 电池电压2 */
-    int field_12;          /* 未知字段 */
-    int field_13;          /* 未知字段 */
-    int ufcs_max_ma;       /* UFCS 最大电流 */
-    int ufcs_en;           /* UFCS 使能 */
-    int pps_max_ma;        /* PPS 最大电流 */
-    int pps_en;            /* PPS 使能 */
-    int cable_type;        /* 线缆类型 */
+    int fcc;               /* fields[0]:  满电容量 mAh (恒定 ~5896) */
+    int design_cap;        /* fields[1]:  设计容量 (恒定 ~5888) */
+    int ic_param_a;        /* fields[2]:  充电IC参数A (线性递减, 1175→-697) */
+    int param_c;           /* fields[3]:  常量 ~2637 */
+    int param_d;           /* fields[4]:  常量 ~2621 */
+    int ic_param_b;        /* fields[5]:  充电IC参数B (= ic_param_a + 405) */
+    int vbus_mv;           /* fields[6]:  总线电压 (mV), 随充电升高 */
+    int const_409;         /* fields[7]:  常量 409 */
+    int ibat_ma;           /* fields[8]:  电池电流 (mA, 负值=充电) */
+    int charge_budget;     /* fields[9]:  充电预算 (91→0, dumpsys reset 后复位) */
+    int budget_sub;        /* fields[10]: = charge_budget - 11 */
+    int batt_vol;          /* fields[11]: 电池电压 (mV), 随充电升高 */
+    int field_12;          /* fields[12]: 未知, 通常 0 */
+    int field_13;          /* fields[13]: 未知, 通常 0 */
+    int ufcs_max_ma;       /* fields[14]: UFCS 最大电流 */
+    int ufcs_en;           /* fields[15]: UFCS 使能 */
+    int pps_max_ma;        /* fields[16]: PPS 最大电流 */
+    int pps_en;            /* fields[17]: PPS 使能 */
+    int cable_type;        /* fields[18]: 线缆类型 */
 } BccParms;
 
 /* UFCS voter 信息 */
