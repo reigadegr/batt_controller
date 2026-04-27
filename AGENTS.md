@@ -6,6 +6,18 @@
 
 源码必须放到src下
 
+## 逆向工具
+
+### strace 抓取 syscall
+
+strace 可绕过 XOR 字符串混淆，直接暴露二进制的真实行为（打开的文件路径、网络连接、进程创建等）。
+
+```bash
+su -c /data/data/com.termux/files/usr/bin/strace tmp/payload.elf.no_license
+```
+
+需要 root 权限（`su -c`），因为目标程序操作 /sys、/proc 等节点需要特权。
+
 ## 提交说明
 
 提交时必须遵循约定式提交（Conventional Commits）。
