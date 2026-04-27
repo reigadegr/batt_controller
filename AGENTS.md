@@ -53,6 +53,10 @@ git config user.email
 
 ## 规范说明
 
+## output harness
+
+**一次响应输出的内容不要太长，最多4000tokens**
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
