@@ -75,37 +75,30 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms)
     return 0;
 }
 
+static int extract_voter_int(const char *status, const char *tag)
+{
+    const char *p = strstr(status, tag);
+    if (!p) return 0;
+    p = strstr(p, "v=");
+    return p ? atoi(p + 2) : 0;
+}
+
 int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters)
 {
     memset(voters, 0, sizeof(*voters));
-
-    const char *p;
-
-    p = strstr(status, "MAX_VOTER:");
-    if (p) {
-        p = strstr(p, "v=");
-        if (p) voters->max_ma = atoi(p + 2);
-    }
-
-    p = strstr(status, "CABLE_MAX_VOTER:");
-    if (p) {
-        p = strstr(p, "v=");
-        if (p) voters->cable_max_ma = atoi(p + 2);
-    }
-
-    p = strstr(status, "STEP_VOTER:");
-    if (p) {
-        p = strstr(p, "v=");
-        if (p) voters->step_ma = atoi(p + 2);
-    }
-
-    p = strstr(status, "BCC_VOTER:");
-    if (p) {
-        p = strstr(p, "v=");
-        if (p) voters->bcc_ma = atoi(p + 2);
-    }
-
+    voters->max_ma       = extract_voter_int(status, "MAX_VOTER:");
+    voters->cable_max_ma = extract_voter_int(status, "CABLE_MAX_VOTER:");
+    voters->step_ma      = extract_voter_int(status, "STEP_VOTER:");
+    voters->bcc_ma       = extract_voter_int(status, "BCC_VOTER:");
     return 0;
+}
+
+static void read_voters_3x(char *buf, int bufsz, UfcsVoters *voters)
+{
+    for (int i = 0; i < 3; i++) {
+        if (sysfs_read_ufcs_voters(buf, bufsz) > 0)
+            charging_parse_ufcs_voters(buf, voters);
+    }
 }
 
 /* fork+execvp 执行单条 dumpsys 命令 */
@@ -215,6 +208,15 @@ static int calc_poll_interval(const int soc_mon[2], const int interval_ms[2], in
     return interval_ms[1] > 0 ? interval_ms[1] : interval_ms[0];
 }
 
+/* 限制最大电流: 取 cfg/proto/cable 中最小的有效值 */
+static int clamp_max_ma(int cfg_max, int proto_max, int cable_max)
+{
+    int m = cfg_max;
+    if (proto_max > 0 && proto_max < m) m = proto_max;
+    if (cable_max > 0 && cable_max < m) m = cable_max;
+    return m;
+}
+
 /*
  * 阶段名称字符串
  */
@@ -301,16 +303,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     /* ---- 阶段 2: 重置 votable ---- */
     sysfs_reset_votables(fds);
 
-    /* ---- 阶段 3: 读取 UFCS voter 信息 (连续 3 次) ---- */
-    for (int i = 0; i < 3; i++) {
-        if (sysfs_read_ufcs_voters(log_buf, sizeof(log_buf)) > 0) {
-            charging_parse_ufcs_voters(log_buf, &voters);
-        }
-    }
+    read_voters_3x(log_buf, sizeof(log_buf), &voters);
 
     cable_max = voters.cable_max_ma;
-    if (cable_max > 0 && cable_max < max_ma)
-        max_ma = cable_max;
+    max_ma = clamp_max_ma(max_ma, 0, cable_max);
 
     /* strace 确认: inc_step = effective_max / 10 */
     inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
@@ -373,24 +369,12 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             use_ufcs = choose_protocol(cfg, &parms);
 
             /* 重新读取 voter 信息确定新的最大电流和步长 */
-            for (int i = 0; i < 3; i++) {
-                if (sysfs_read_ufcs_voters(log_buf, sizeof(log_buf)) > 0)
-                    charging_parse_ufcs_voters(log_buf, &voters);
-            }
-
-            if (use_ufcs) {
-                max_ma = cfg->ufcs_max;
-                if (parms.ufcs_max_ma > 0 && parms.ufcs_max_ma < max_ma)
-                    max_ma = parms.ufcs_max_ma;
-            } else {
-                max_ma = cfg->pps_max;
-                if (parms.pps_max_ma > 0 && parms.pps_max_ma < max_ma)
-                    max_ma = parms.pps_max_ma;
-            }
+            read_voters_3x(log_buf, sizeof(log_buf), &voters);
 
             cable_max = voters.cable_max_ma;
-            if (cable_max > 0 && cable_max < max_ma)
-                max_ma = cable_max;
+            max_ma = clamp_max_ma(use_ufcs ? cfg->ufcs_max : cfg->pps_max,
+                                  use_ufcs ? parms.ufcs_max_ma : parms.pps_max_ma,
+                                  cable_max);
 
             /* strace 确认: inc_step = effective_max / 10 (非 step_ma / 10) */
             inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
@@ -483,41 +467,18 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             break;
         }
 
-        case PHASE_CV: {
-            /*
-             * CV (恒压) 阶段: 电压已达 cv_vol_mv, 限制电流不超过 cv_max_ma
-             * 电流逐步递减以维持电压
-             */
-            int cv_max = cfg->cv_max_ma > 0 ? cfg->cv_max_ma : effective_max;
-            if (cv_max > effective_max)
-                cv_max = effective_max;
-
-            /* 如果当前电流超过 CV 限制, 逐步降低 (strace 确认步长 ~50mA) */
-            if (current_ma > cv_max) {
-                current_ma -= cfg->adjust_step > 0 ? cfg->adjust_step : 50;
-                if (current_ma < cv_max)
-                    current_ma = cv_max;
-            }
-
-            write_current(fds, use_ufcs, current_ma);
-            break;
-        }
-
+        case PHASE_CV:
         case PHASE_TC: {
-            /*
-             * TC (涓流) 阶段: 高 SoC, 低电流充电
-             * 电流不超过 tc_full_ma, 维持在较低水平
-             */
-            int tc_max = cfg->tc_full_ma > 0 ? cfg->tc_full_ma : 500;
-            if (tc_max > effective_max)
-                tc_max = effective_max;
-
-            if (current_ma > tc_max) {
+            /* CV/TC: 限流递减以维持电压 */
+            int cap_cfg = (phase == PHASE_CV) ? cfg->cv_max_ma : cfg->tc_full_ma;
+            int cap = cap_cfg > 0 ? cap_cfg : (phase == PHASE_CV ? effective_max : 500);
+            if (cap > effective_max)
+                cap = effective_max;
+            if (current_ma > cap) {
                 current_ma -= cfg->adjust_step > 0 ? cfg->adjust_step : 50;
-                if (current_ma < tc_max)
-                    current_ma = tc_max;
+                if (current_ma < cap)
+                    current_ma = cap;
             }
-
             write_current(fds, use_ufcs, current_ma);
             break;
         }
@@ -541,13 +502,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         /* 动态轮询间隔 */
         int poll_ms = cfg->loop_interval_ms;
-        if (use_ufcs) {
-            int ms = calc_poll_interval(cfg->ufcs_soc_mon, cfg->ufcs_interval_ms, soc);
-            if (ms > 0) poll_ms = ms;
-        } else {
-            int ms = calc_poll_interval(cfg->pps_soc_mon, cfg->pps_interval_ms, soc);
-            if (ms > 0) poll_ms = ms;
-        }
+        const int *mon = use_ufcs ? cfg->ufcs_soc_mon : cfg->pps_soc_mon;
+        const int *ival = use_ufcs ? cfg->ufcs_interval_ms : cfg->pps_interval_ms;
+        int ms = calc_poll_interval(mon, ival, soc);
+        if (ms > 0) poll_ms = ms;
 
         usleep((unsigned int)poll_ms * 1000);
     }

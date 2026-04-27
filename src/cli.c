@@ -137,42 +137,51 @@ static int exec_kernel_log(void)
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
+static int cli_read_sysfs(CliMode mode)
+{
+    SysfsFds fds;
+    if (sysfs_open_all(&fds) < 0) {
+        fprintf(stderr, "sysfs_open_all failed\n");
+        return -1;
+    }
+    int val;
+    switch (mode) {
+    case CLI_MODE_TEMP:  val = sysfs_read_int(fds.battery_temp);  break;
+    case CLI_MODE_SOC:   val = sysfs_read_int(fds.chip_soc);     break;
+    default:             val = sysfs_read_int(fds.adapter_power); break;
+    }
+    printf("%d\n", val);
+    sysfs_close_all(&fds);
+    return 0;
+}
+
+static int cli_force_current(const CliArgs *args)
+{
+    SysfsFds fds;
+    if (sysfs_open_all(&fds) < 0) return -1;
+    if (args->mode == CLI_MODE_PPS) {
+        sysfs_write_int(fds.pps_force_val, args->value);
+        sysfs_write_str(fds.pps_force_active, "1");
+        printf("PPS force_val set to %d mA\n", args->value);
+    } else {
+        sysfs_write_int(fds.ufcs_force_val, args->value);
+        sysfs_write_str(fds.ufcs_force_active, "1");
+        printf("UFCS force_val set to %d mA\n", args->value);
+    }
+    sysfs_close_all(&fds);
+    return 0;
+}
+
 int cli_exec(const CliArgs *args, const BattConfig *cfg)
 {
     SysfsFds fds;
     memset(&fds, 0, sizeof(fds));
 
     switch (args->mode) {
-    case CLI_MODE_TEMP: {
-        if (sysfs_open_all(&fds) < 0) {
-            fprintf(stderr, "sysfs_open_all failed\n");
-            return -1;
-        }
-        int temp = sysfs_read_int(fds.battery_temp);
-        printf("%d\n", temp);
-        sysfs_close_all(&fds);
-        return 0;
-    }
-    case CLI_MODE_SOC: {
-        if (sysfs_open_all(&fds) < 0) {
-            fprintf(stderr, "sysfs_open_all failed\n");
-            return -1;
-        }
-        int soc = sysfs_read_int(fds.chip_soc);
-        printf("%d\n", soc);
-        sysfs_close_all(&fds);
-        return 0;
-    }
-    case CLI_MODE_POWER: {
-        if (sysfs_open_all(&fds) < 0) {
-            fprintf(stderr, "sysfs_open_all failed\n");
-            return -1;
-        }
-        int power = sysfs_read_int(fds.adapter_power);
-        printf("%d\n", power);
-        sysfs_close_all(&fds);
-        return 0;
-    }
+    case CLI_MODE_TEMP:
+    case CLI_MODE_SOC:
+    case CLI_MODE_POWER:
+        return cli_read_sysfs(args->mode);
     case CLI_MODE_CHARGE: {
         if (sysfs_open_all(&fds) < 0) return -1;
         sysfs_write_int(fds.bcc_current, args->value);
@@ -187,22 +196,9 @@ int cli_exec(const CliArgs *args, const BattConfig *cfg)
         sysfs_close_all(&fds);
         return 0;
     }
-    case CLI_MODE_PPS: {
-        if (sysfs_open_all(&fds) < 0) return -1;
-        sysfs_write_int(fds.pps_force_val, args->value);
-        sysfs_write_str(fds.pps_force_active, "1");
-        printf("PPS force_val set to %d mA\n", args->value);
-        sysfs_close_all(&fds);
-        return 0;
-    }
-    case CLI_MODE_UFCS: {
-        if (sysfs_open_all(&fds) < 0) return -1;
-        sysfs_write_int(fds.ufcs_force_val, args->value);
-        sysfs_write_str(fds.ufcs_force_active, "1");
-        printf("UFCS force_val set to %d mA\n", args->value);
-        sysfs_close_all(&fds);
-        return 0;
-    }
+    case CLI_MODE_PPS:
+    case CLI_MODE_UFCS:
+        return cli_force_current(args);
     case CLI_MODE_LOG: {
         int ret = exec_kernel_log();
         if (ret == 0)
