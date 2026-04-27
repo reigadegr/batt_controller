@@ -28,7 +28,7 @@ UFCS 重置延迟 ✅ | 满电判断 4570mV ✅ | 3 线程架构 ✅ |
 
 ```
 RISE #1: 500→1750→3550→3650→5400→7550→8000 (步长不均, 2s间隔)
-reset:   votable=0 → dumpsys×3 → sleep(2) → mmi=0 → sleep(1) → mmi=1 → sleep(8)
+reset:   votable=0 → dumpsys set ac/status → sleep(2) → mmi=0 → sleep(1) → mmi=1 → sleep(8) → dumpsys reset
 RISE #2: 1300→2100→2900→...→8000 (步长恒定800, ~480ms间隔)
 CV 衰减: 8000→6400→5300→4300→...→1000 (~480ms间隔, 步长50-100mA)
 TC 保持: 1000mA × 28次 (~8秒)
@@ -50,6 +50,10 @@ TC 保持: 1000mA × 28次 (~8秒)
 | Android 属性读取与二进制不一致 | ✅ 已移除 (二进制只读 ro.arch) |
 | 日志仅 stdout | ✅ 已添加 /data/opbatt/battchg.log |
 | ufcs_status 持久 fd 未使用 | ✅ 已移除，改用临时打开 |
+| dumpsys reset 执行时序错误 | ✅ reset 移到 sleep(8) 之后 (strace 行 904/1033) |
+| RISE #1 的 500→5000 跳转 | ✅ 已移除 (strace 首步 500→1750) |
+| SoC 轮询边界条件 | ✅ `<=` 改为 `<` (strace SoC=60 用 400ms) |
+| CV/TC 衰减步长 | ✅ dec_step(100) 改为 adjust_step(50) (strace 确认 ~50mA) |
 
 ---
 
@@ -59,12 +63,11 @@ TC 保持: 1000mA × 28次 (~8秒)
 |------|--------|------|
 | **ChargePhase 状态机** (IDLE/RISE/CV/TC/FULL) | ❌ 推测 | strace 无阶段名，仅观测到 RISE→衰减→保持→新 RISE 电流模式 |
 | **RISE #1 步长** (1250/1800/100/1750/2150/450) | ❌ 不一致 | 代码 inc_step=100 无法产生，rise_quickstep_thr_mv 减速逻辑也无法解释 |
-| **RISE #2 步长** (恒定 800) | ❌ 不一致 | 与 RISE #1 差异大，可能 ufcs_en 状态变化导致 inc_step 被 STEP_VOTER/10 覆盖 |
-| **CV 衰减触发机制** | ❌ 推测 | 代码用 cv_vol_mv 电压阈值，但 strace 中衰减可能由 bcc_parms 驱动 |
-| **SoC 轮询间隔** | ❌ 矛盾 | 代码区间内 650ms > 区间外 400ms，与"快轮询"注释矛盾 |
-| **500→5000 首次跳转** | ❌ 推测 | strace RISE #1 首步 500→1750，非 500→5000 |
+| **RISE #2 步长** (恒定 800) | ⚠️ 部分匹配 | step_ma/10 模式方向正确，但 step_ma 可能非 9100；起始 1300 vs 代码 1000 (300mA 偏移来源不明) |
+| **CV 衰减触发机制** | ❌ 推测 | 代码用 cv_vol_mv 电压阈值，但 strace 中衰减由 bcc_parms 驱动，且存在电流回升 (+50mA) |
 | **batt_full_thr_mv=4570** | ❓ 未触发 | 本次充电未达到满电，无法验证 |
 | **config key 前缀匹配** | ⚠️ 隐患 | `strncmp` 无 `=` 终止检查，"inc_step" 可能匹配 "batt_inc_step" |
+| **bcc_parms fields[2] 温度** | ⚠️ 存疑 | fields[2]=1175 (117.5°C) 与 sysfs battery/temp=34.2°C 差 83°C，可能为充电 IC 结温 |
 
 ---
 
@@ -93,7 +96,9 @@ strace 日志: `tmp/strace_log/strace_20260427_162732.log`，每次最多读 30 
 
 ### 已完成
 
-Agent 2 (sysfs+monitor) ✅ | Agent 3 (config+cli+main) ✅ | 已修复 2 个 bug
+Agent 1 (charging.c 逐行审查) ✅ | Agent 2 (sysfs+monitor) ✅ |
+Agent 3 (config+cli+main) ✅ | Agent 4 (代码 vs strace 交叉验证) ✅ |
+已修复 11 个 bug
 
 ### 输出
 
