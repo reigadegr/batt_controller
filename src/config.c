@@ -68,6 +68,8 @@ int config_parse(const char *path, BattConfig *cfg)
             cfg->adjust_step = atoi(v);
         } else if ((v = extract_value(line, "inc_step"))) {
             cfg->inc_step = atoi(v);
+        } else if ((v = extract_value(line, "dec_step"))) {
+            cfg->dec_step = atoi(v);
         } else if ((v = extract_value(line, "max_ufcs_chg_reset_cc"))) {
             cfg->max_ufcs_chg_reset_cc = atoi(v);
         } else if ((v = extract_value(line, "ufcs_reset_delay"))) {
@@ -102,6 +104,12 @@ int config_parse(const char *path, BattConfig *cfg)
             cfg->cv_vol_mv = atoi(v);
         } else if ((v = extract_value(line, "cv_max_ma"))) {
             cfg->cv_max_ma = atoi(v);
+        } else if ((v = extract_value(line, "cv_step_mv"))) {
+            cfg->cv_step_count = parse_int_array(v, cfg->cv_step_mv, CV_STEP_MAX);
+        } else if ((v = extract_value(line, "cv_step_ma"))) {
+            int ma_count = parse_int_array(v, cfg->cv_step_ma, CV_STEP_MAX);
+            if (cfg->cv_step_count > 0 && ma_count < cfg->cv_step_count)
+                cfg->cv_step_count = ma_count;
         } else if ((v = extract_value(line, "tc_vol_thr_mv"))) {
             cfg->tc_vol_thr_mv = atoi(v);
         } else if ((v = extract_value(line, "tc_thr_soc"))) {
@@ -161,6 +169,7 @@ void config_dump(const BattConfig *cfg)
 
     printf("adjust_step: %d\n", cfg->adjust_step);
     printf("inc_step: %d\n", cfg->inc_step);
+    printf("dec_step: %d\n", cfg->dec_step);
 
     printf("batt_vol_thr: %d %d\n", cfg->batt_vol_thr[0], cfg->batt_vol_thr[1]);
     printf("batt_vol_soc: %d %d\n", cfg->batt_vol_soc[0], cfg->batt_vol_soc[1]);

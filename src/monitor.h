@@ -17,6 +17,19 @@
 #include "config.h"
 #include "sysfs.h"
 
+/* battery_log_content 解析结果 */
+typedef struct {
+    int temp_raw;       /* [1] battery/temp 原始值 (0.1°C) */
+    int temp_01c;       /* [2] 温度 0.1°C (bcc_parms[7]) */
+    int vbat_mv;        /* [3] 电池电压 mV */
+    int vbus_mv;        /* [4] 总线电压 mV */
+    int ibat_ma;        /* [5] 电池电流 mA (负值=充电) */
+    int chip_soc;       /* [6] 芯片 SoC % */
+    int ui_soc;         /* [7] UI SoC % */
+    int chg_sts;        /* [8] 充电状态 */
+    int fcc_mah;        /* [12] 累积充电量 mAh */
+} BatteryLog;
+
 /* 全局共享状态 */
 typedef struct {
     volatile int   usb_online;       /* USB 在线状态 (0/1) */
@@ -24,6 +37,7 @@ typedef struct {
     volatile int   running;          /* 总运行标志 */
     SysfsFds       fds;              /* sysfs 文件描述符 */
     BattConfig     config;           /* 配置 */
+    BatteryLog     blog;             /* battery_log_content 解析结果 */
 } SharedState;
 
 /*

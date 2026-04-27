@@ -12,6 +12,9 @@
 /* 温控档位数 */
 #define TEMP_RANGE_MAX    5
 
+/* CV 降流阶梯最大档数 */
+#define CV_STEP_MAX       8
+
 /* 充电配置 */
 typedef struct {
     /* 温控 */
@@ -23,6 +26,7 @@ typedef struct {
     /* 电流调节步长 */
     int      adjust_step;                    /* 电流微调步长 (mA) */
     int      inc_step;                       /* 电流递增步长 (mA) */
+    int      dec_step;                       /* 电流递减步长 (mA, CV 阶段) */
 
     /* UFCS 快充 */
     int      max_ufcs_chg_reset_cc;          /* UFCS 充电重置计数 */
@@ -49,9 +53,12 @@ typedef struct {
     int      rise_quickstep_thr_mv;          /* 快速上升阈值 (mV) */
     int      rise_wait_thr_mv;               /* 上升等待阈值 (mV) */
 
-    /* CV (恒压) 阶段 */
+    /* CV (恒压) 阶段 — vbat 阈值驱动阶梯降流 */
     int      cv_vol_mv;                      /* CV 阶段电压 (mV) */
     int      cv_max_ma;                      /* CV 阶段最大电流 (mA) */
+    int      cv_step_mv[CV_STEP_MAX];        /* CV 降流 vbat 阈值 (mV) */
+    int      cv_step_ma[CV_STEP_MAX];        /* CV 降流目标电流 (mA) */
+    int      cv_step_count;                  /* CV 降流阶梯数 */
 
     /* TC (涓流充电) 阶段 */
     int      tc_vol_thr_mv;                  /* TC 阶段电压阈值 (mV) */

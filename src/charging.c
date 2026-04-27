@@ -296,6 +296,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     int in_charge_cycle = 0;
     int soc = 0;
     ChargePhase phase = PHASE_IDLE;
+    int cv_step_idx = 0;
+    int cv_holding = 0;
 
     /* ---- 阶段 1: 读取电池状态日志 ---- */
     sysfs_read_battery_log(log_buf, sizeof(log_buf));
@@ -387,6 +389,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
             current_ma = 500;
             ramp_idx = 0;
+            cv_step_idx = 0;
+            cv_holding = 0;
             in_charge_cycle = 0;
             phase = PHASE_IDLE;
             continue;
@@ -397,6 +401,17 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
         int effective_max = max_ma;
         if (temp_offset > 0 && effective_max > temp_offset)
             effective_max = temp_offset;
+
+        /* thermal_hi 限流: strace 确认 thermal_hi 阶梯 91→85→80 限制电流上限 */
+        if (parms.thermal_hi > 0) {
+            int thermal_cap = parms.thermal_hi * 100;
+            if (thermal_cap > 0 && thermal_cap < effective_max)
+                effective_max = thermal_cap;
+        }
+
+        /* STEP_VOTER 限流: strace 确认 STEP_VOTER 从 9100 变为 8000 */
+        if (voters.step_ma > 0 && voters.step_ma < effective_max)
+            effective_max = voters.step_ma;
 
         /* ---- 充电阶段状态机 ---- */
         ChargePhase new_phase = next_phase(phase, cfg, &parms, soc);
@@ -467,19 +482,70 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             break;
         }
 
-        case PHASE_CV:
-        case PHASE_TC: {
-            /* CV/TC: 限流递减以维持电压 */
-            int cap_cfg = (phase == PHASE_CV) ? cfg->cv_max_ma : cfg->tc_full_ma;
-            int cap = cap_cfg > 0 ? cap_cfg : (phase == PHASE_CV ? effective_max : 500);
-            if (cap > effective_max)
-                cap = effective_max;
-            if (current_ma > cap) {
-                current_ma -= cfg->adjust_step > 0 ? cfg->adjust_step : 50;
-                if (current_ma < cap)
-                    current_ma = cap;
+        case PHASE_CV: {
+            /*
+             * CV 阶梯降流 (strace 确认):
+             * vbat 达到阈值时阶梯式大幅降流, 非线性递减。
+             * 降流后维持不写入 force_val, 直到下个阈值触发。
+             * 阶梯全部走完后进入 cv_holding 静默模式。
+             */
+            if (cv_holding) {
+                /* 阶梯已走完, 静默维持, 不写入 force_val */
+                break;
             }
-            write_current(fds, use_ufcs, current_ma);
+
+            int dropped = 0;
+            for (int i = cv_step_idx; i < cfg->cv_step_count; i++) {
+                if (parms.vbat_mv >= cfg->cv_step_mv[i]) {
+                    current_ma = cfg->cv_step_ma[i];
+                    cv_step_idx = i + 1;
+                    dropped = 1;
+                }
+            }
+
+            if (dropped) {
+                write_current(fds, use_ufcs, current_ma);
+                get_timestamp(ts, sizeof(ts));
+                snprintf(line, sizeof(line),
+                         "%s ==== CV step-down to %dmA (vbat=%dmV, step=%d) ====\n",
+                         ts, current_ma, parms.vbat_mv, cv_step_idx);
+                log_write(line);
+            }
+
+            /* 所有阶梯走完, 进入静默维持 */
+            if (cfg->cv_step_count > 0 && cv_step_idx >= cfg->cv_step_count) {
+                cv_holding = 1;
+                get_timestamp(ts, sizeof(ts));
+                snprintf(line, sizeof(line),
+                         "%s ==== CV holding at %dmA (vbat=%dmV) ====\n",
+                         ts, current_ma, parms.vbat_mv);
+                log_write(line);
+            }
+
+            /* 无阶梯配置时, 兜底用 dec_step 线性递减 */
+            if (cfg->cv_step_count == 0) {
+                int cap = cfg->cv_max_ma > 0 ? cfg->cv_max_ma : effective_max;
+                if (cap > effective_max) cap = effective_max;
+                if (current_ma > cap) {
+                    int step = cfg->dec_step > 0 ? cfg->dec_step : 100;
+                    current_ma -= step;
+                    if (current_ma < cap) current_ma = cap;
+                    write_current(fds, use_ufcs, current_ma);
+                }
+            }
+            break;
+        }
+
+        case PHASE_TC: {
+            /* TC: 涓流阶段, 限流递减 */
+            int cap = cfg->tc_full_ma > 0 ? cfg->tc_full_ma : 500;
+            if (cap > effective_max) cap = effective_max;
+            if (current_ma > cap) {
+                int step = cfg->dec_step > 0 ? cfg->dec_step : 100;
+                current_ma -= step;
+                if (current_ma < cap) current_ma = cap;
+                write_current(fds, use_ufcs, current_ma);
+            }
             break;
         }
 
