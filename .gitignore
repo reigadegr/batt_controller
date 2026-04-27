@@ -1,0 +1,5 @@
+tmp
+**/*.bak
+**/*.o
+**/payload
+CLAUDE.md
