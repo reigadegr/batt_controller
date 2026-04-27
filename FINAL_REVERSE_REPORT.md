@@ -1,7 +1,7 @@
 # payload.elf.no_license 逆向分析报告
 
 > 目标: 开源重写 opbatt_control 充电控制核心
-> 更新: 2026-04-27 (strace 深度分析 + RISE 三段式算法 + bcc_parms 交叉验证)
+> 更新: 2026-04-28 (深度逆向 + CV阶梯降流 + voter扩展 + battery_log解析)
 
 ---
 
@@ -9,6 +9,7 @@
 
 ELF 64-bit ARM aarch64, stripped, NDK r26d, 动态链接 + 静态 OpenSSL。
 XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/logdw，无 TCP。
+深度逆向文档: `tmp/DEEP_REVERSE_ANALYSIS.md`
 
 ---
 
@@ -37,6 +38,13 @@ XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/
 | bcc_parms 字段修正 (f6↔f11 互换, f7 常量→温度) | ✅ |
 | dec_step 死代码清理 | ✅ |
 | 11 个 bug 修复 (4 agent 审查) | ✅ |
+| **CV 阶梯降流 (vbat 阈值驱动)** | ✅ strace 确认, 2026-04-28 实现 |
+| **CV 维持模式 (阶梯走完后不写 force_val)** | ✅ strace 确认, 2026-04-28 实现 |
+| **LIMIT_FCL_VOTER 解析** | ✅ CSV 确认, 2026-04-28 实现 |
+| **thermal_hi 阶梯限流 (×100→mA)** | ✅ CSV 确认, 2026-04-28 实现 |
+| **STEP_VOTER 限流 (9100→8000)** | ✅ CSV 确认, 2026-04-28 实现 |
+| **battery_log_content 解析** | ✅ strace 确认, 2026-04-28 实现 |
+| **dec_step 配置项** | ✅ 2026-04-28 实现 |
 
 ---
 
@@ -103,39 +111,27 @@ CV 降流:    8000 → 5500 (vbat≈3939mV) → 3500 (vbat≈4015mV)
 
 ---
 
-## 五、粗糙实现/待改进
+## 五、仍需改进/待验证
 
-### 5.1 CV 阶段降流算法 ⚠️
+### 5.1 负电流/去极化阶段 ❌
 
-**代码现状:** 统一用 `adjust_step=50mA` 线性递减。
+strace 中 force_val 出现负值序列 `0→-150→-300→...→-300→1000`（发生在 CV 末尾和 TC 之间）。本次 session SoC 仅 43% 未观测到。需要高 SoC 段 strace 数据确认触发条件。
 
-**strace 实际:** 阶梯式大幅降流 (8000→5500 一步 2500mA)，触发条件是 vbat 达到阈值，非自主定时递减。降流后维持数分钟不变，等待 vbat 再次上升。
+### 5.2 CV 电流回升 ❌
 
-**差距:** 代码的线性递减模型与实际的"阈值触发+阶梯降流"模式不符。需实现 vbat 阈值驱动的阶梯降流。
+历史 strace 观测到 3450→3500 (+50mA) 回升。可能是 vbat 回落后自然重入较低阶梯。
 
-### 5.2 RISE Quickstart 步长公式 ⚠️
+### 5.3 充电周期结束检测 ❓
 
-**代码现状:** `cable_max * 9 / 80` ≈ 900 (推测)。
+thermal_hi 从 91→80 未归零。可能的结束机制: batt_full_thr_mv / tc_full_ma+tc_vol_full_mv / BATT_SOC_VOTER。需完整充电周期数据。
 
-**strace 实际:** 500→1400 (+900)，公式未从二进制直接确认，但数值匹配。
+### 5.4 quickstart/首步公式 ⚠️
 
-### 5.3 RISE 首个斜坡步 ⚠️
+quickstart `cable_max*9/80` 和首斜坡步 `cable_max*3/32` 数值匹配但未从二进制直接确认。
 
-**代码现状:** `cable_max * 3 / 32` ≈ 750 (推测)。
+### 5.5 config_dump 默认值 ⚠️
 
-**strace 实际:** 1400→2150 (+750)，数值匹配但公式未直接确认。
-
-### 5.4 日志写入机制 ⚠️
-
-**代码现状:** 每次 `log_write()` 都 open()+write()+close()。
-
-**strace 实际:** 二进制将 stdout(fd=1) 重定向到日志文件，直接 `write(1, ...)`。功能等价但 syscall 数不同。
-
-### 5.5 充电周期结束检测 ⚠️
-
-**代码现状:** 用 `thermal_hi == 0` 判断充电结束。
-
-**strace 实际:** 本次 session 中 thermal_hi 始终为 91，未观察到归零。原始二进制可能有其他检测机制。
+strace 显示 `ufcs_interval_ms: 650 400`，代码默认值 `450 650`。顺序和值不同，运行时由配置文件覆盖。
 
 ---
 
@@ -143,35 +139,17 @@ CV 降流:    8000 → 5500 (vbat≈3939mV) → 3500 (vbat≈4015mV)
 
 ### 6.1 负电流/放电模式 ❌
 
-strace 中 force_val 出现负值序列:
-
-```
-0 → -150 → -300 → -450 → -600 → -550 → ... → -300 → 1000
-```
-
-发生在 CV 衰减末尾和 TC 保持之间，可能是"去极化"阶段。代码完全无此逻辑。
+strace 中 force_val 出现负值序列。发生在 CV 衰减末尾和 TC 保持之间，可能是"去极化"阶段。代码完全无此逻辑。需要高 SoC 段 strace 数据。
 
 ### 6.2 CV 电流回升 ❌
 
 strace 观测到 3450→3500 (+50mA) 回升，代码 CV 阶段只减不增。
 
-### 6.3 battery_log_content 解析 ❌
+### 6.3 独立 USB 检测线程生命周期管理 ⚠️
 
-Thread 3 每 5s 读取 battery_log_content 但不解析。二进制可能用此数据做充电决策。格式:
+二进制 PID 9185 在 USB 拔出后关闭所有 fd，重新插入时重新打开。代码中 sysfs_open_all 只调用一次。
 
-```
-,[SoC],[temp],[vbat],[vbus],[ibat],[ui_soc],[chg_sts],...,[FCC],[SoC],...
-```
-
-### 6.4 独立 USB 检测线程 ❌
-
-二进制 PID 9185 独立轮询 usb/online (2s)，检测到后才初始化 fd 和重置 votable。代码假设 fd 已打开。
-
-### 6.5 独立日志采集线程 ❌
-
-二进制 PID 9187 独立线程每 5s 读 battery_log_content。代码无此线程。
-
-### 6.6 batt_full_thr_mv 验证 ❓
+### 6.4 batt_full_thr_mv 验证 ❓
 
 本次充电未达满电 (最高 vbat ≈ 4293mV < 4570mV)，无法验证。
 
