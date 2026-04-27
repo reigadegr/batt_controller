@@ -521,3 +521,237 @@ strace 发现的额外路径（原报告未列出）:
 | RISE 减速阈值 (rise_quickstep_thr_mv) | ❌ 推测 | strace 显示 RISE #1 步长不均匀 (100~2150)，RISE #2 均匀 (800) |
 | calc_poll_interval SoC 联动 | ❓ 未确认 | strace 显示 RISE 期间 2s、CV 期间 ~480ms，可能与 SoC 无关 |
 | cv_vol_mv/tc_thr_soc 转换条件 | ❌ 推测 | 无直接证据，电流衰减可能由其他机制触发 |
+
+---
+
+## 九、待完成审查任务
+
+> Agent 2 (sysfs+monitor) 和 Agent 3 (config+cli+main) 已完成审查，发现的 bug 已修复。
+> Agent 1 (charging.c) 和 Agent 4 (交叉验证) 因 API 限流失败，任务未完成。
+> 下一个 agent 请按本节指引继续。
+
+### 9.1 Agent 1 未完成任务: charging.c 逐行审查
+
+**目标**: 逐函数审查 `src/charging.c`，对照 strace 验证每个逻辑分支的正确性。
+
+**输入文件**:
+- `src/charging.c` + `src/charging.h` (待审查代码)
+- `tmp/strace_log/strace_20260427_162732.log` (21171 行, 每次最多读 30 行)
+- `FINAL_REVERSE_REPORT.md` 第八节 (strace 结论)
+
+**审查清单 (逐项完成，标注 ✅/❓/❌)**:
+
+#### A. `charging_parse_bcc_parms()` (charging.c 约 47-76 行)
+- [ ] 解析逻辑是否与 strace 中 bcc_parms 的 19 字段无前导逗号格式一致
+- [ ] 用 strace 行 75 验证: `"5896,5888,1175,2637,2621,1580,3643,409,-1740,91,80,3623,0,0,1900,1,0,0,0"` → fields[0]=5896(vbat), fields[1]=5888(ibat?), fields[2]=1175(temp?)
+- [ ] 字段含义标注是否合理 (vbat_mv/ibat_ma/temp_01c 等)
+
+#### B. `charging_parse_ufcs_voters()` (charging.c 约 78-105 行)
+- [ ] 是否正确解析 4 个 voter: MAX_VOTER, CABLE_MAX_VOTER, STEP_VOTER, BCC_VOTER
+- [ ] 用 strace 行 14 的 UFCS_CURR/status 内容验证解析结果:
+  ```
+  MAX_VOTER: en=1 v=9100
+  CABLE_MAX_VOTER: en=1 v=8000
+  STEP_VOTER: en=1 v=9100
+  BCC_VOTER: en=0 v=0
+  ```
+- [ ] effective=CABLE_MAX_VOTER type=Min v=8000 是否被正确处理
+
+#### C. `run_dumpsys()` (charging.c 约 115-130 行)
+- [ ] fork+execvp 实现是否与 strace SIGCHLD 证据一致 (PID 10879/10884)
+- [ ] argv 构造是否正确: `dumpsys battery set ac 1` 等
+
+#### D. `charging_dumpsys_reset()` (charging.c 约 146-158 行)
+- [ ] 完整序列是否与 strace 一致:
+  ```
+  dumpsys set ac 1 → set status 2 → reset
+  sleep(2)                    ← strace 行 868→874 (16:28:23.861→16:28:25.861)
+  mmi_charging_enable = "0"   ← strace 行 874
+  sleep(1)                    ← strace 行 874→880 (→16:28:26.880)
+  mmi_charging_enable = "1"   ← strace 行 880
+  sleep(8)                    ← strace 行 881→1076 (→16:28:35.598)
+  ```
+
+#### E. `charging_loop()` 主循环 (charging.c 约 277-558 行)
+
+**E1. 初始化阶段** (strace 行 1-76):
+- [ ] votable 重置 (写 "0" 到 4 个节点) 是否与 strace 行 39-42 一致
+- [ ] voter 读取 3 次是否与 strace 行 61-65 一致
+- [ ] 日志输出格式是否与 strace 行 72-73 的 battchg.log 内容匹配:
+  ```
+  [2026-04-27-16:27:46]: UFCS_CHG: AdpMAXma=9100ma, CableMAXma=8000ma, Maxallow=9100ma, Maxset=8000ma, OP_chg=1
+  [2026-04-27-16:27:46]: ==== Charger type UFCS, set max current 8000ma ====
+  ```
+
+**E2. RISE 阶段** (strace 行 77-143, 1076-1155):
+- [ ] RISE #1 电流序列 `500→1750→3550→3650→5400→7550→8000` 能否由当前 RISE 逻辑产生
+  - 步长不均匀 (1250/1800/100/1750/2150/450)，当前 inc_step=100 的代码如何产生这些步长?
+  - `curr_inc_wait_cycles` 和 `rise_quickstep_thr_mv` 是否能解释这种模式?
+- [ ] RISE #2 电流序列 `1300→2100→2900→3700→4500→5300→6100→6900→7700→8000` (步长恒定 800)
+  - 为什么 RISE #1 和 RISE #2 步长差异如此大?
+  - `restart_count` 和 `ufcs_en` 状态变化是否能解释?
+- [ ] RISE 期间 2s 间隔 vs CV 期间 ~480ms 间隔的差异原因
+
+**E3. CV/衰减阶段** (strace 行 2945-19488):
+- [ ] 电流从 8000 逐步降到 1000，步长 50-100mA，间隔 ~480ms
+- [ ] 当前 CV 逻辑 (只限制上限，无主动递减) 能否产生这种衰减模式?
+- [ ] 还是说衰减由 bcc_parms 中的某个字段驱动?
+
+**E4. TC 保持阶段** (strace 行 20869-20978):
+- [ ] 1000mA 持续约 8 秒 (28 次写入 × ~480ms)
+- [ ] 当前 TC 逻辑是否匹配?
+
+**E5. 充电周期重启** (strace 行 521-880):
+- [ ] 触发条件 `charge_status == 0 && in_charge_cycle` 是否与 strace 一致
+- [ ] 重启后 current_ma=1000 是否与 RISE #2 起始 1300mA 一致?
+
+**E6. 温控逻辑**:
+- [ ] strace 中 temp 值变化: 342→343→344→352 (0.1°C 单位, 即 34.2→35.2°C)
+- [ ] 温控偏移是否在 strace 电流变化中可见?
+
+#### F. `log_write()` (charging.c 约 25-33 行)
+- [ ] 是否正确写入 stdout + /data/opbatt/battchg.log
+- [ ] strace 行 72 确认 write(1</data/opbatt/battchg.log>, ...)
+
+**输出格式**:
+```markdown
+# Agent 1 审查报告: charging.c
+
+## 总结
+(一句话: 整体一致/存在 N 处不一致/推测性代码过多)
+
+## 逐项审查结果
+### A. charging_parse_bcc_parms — ✅/❓/❌
+(具体发现)
+
+### B. charging_parse_ufcs_voters — ✅/❓/❌
+...
+
+## 发现汇总表
+| # | 函数 | 行号 | 严重度 | 类型 | strace 证据 | 建议 |
+|---|------|------|--------|------|------------|------|
+
+## 置信度统计
+- ✅ strace 确认: N 处
+- ❓ 推测性代码: N 处
+- ❌ 与 strace 不一致: N 处
+```
+
+---
+
+### 9.2 Agent 4 未完成任务: 代码 vs strace 交叉验证
+
+**目标**: 模拟代码执行路径，逐步对照 strace 实际 syscall 序列，找出所有不一致。
+
+**输入文件**:
+- `src/` 全部源文件
+- `tmp/strace_log/strace_20260427_162732.log` (21171 行)
+- `FINAL_REVERSE_REPORT.md` 第八节
+
+**方法**:
+
+#### Phase 1: 提取 strace 按 PID 分组的 syscall 序列
+
+用 grep 按 PID 分组提取关键 syscall:
+```bash
+# PID 15505 (USB 监控)
+grep '^15505 ' strace.log | grep -E 'read|write|nanosleep|openat' | head -50
+
+# PID 15506 (充电控制)
+grep '^15506 ' strace.log | grep -E 'read|write|nanosleep|openat' | head -80
+
+# PID 15507 (电池日志)
+grep '^15507 ' strace.log | grep -E 'read|write|nanosleep|openat' | head -30
+```
+
+#### Phase 2: 模拟代码执行，逐步对照
+
+**2a. 启动序列** (strace 行 1-42):
+- 3 个线程几乎同时启动
+- PID 15505 先运行 (打开所有 fd + 重置 votable)
+- PID 15506 等待 charging_active (通过 nanosleep 2s 表现)
+- PID 15507 开始 5s 轮询
+- **对照 main.c**: 线程创建顺序、charging_thread_wrapper 等待逻辑
+
+**2b. 充电器插入** (strace 行 27-28):
+- PID 15505 读 usb/online 从 "0" 变 "1"
+- PID 15505 立即打开 sysfs 节点 (openat 行 29-38)
+- **对照 monitor.c**: usb_online=1 → charging_active=1 的逻辑
+
+**2c. 首次充电初始化** (strace 行 39-76):
+- PID 15505: votable 重置 (写 "0" × 4)
+- PID 15506: 开始运行 (之前在 sleep)
+- PID 15506: 读 battery_log → chip_soc → ufcs_status(×3) → adapter_power → bcc_current → mmi_charging_enable → PPS/UFCS force
+- PID 15506: 读 bcc_parms → temp → 写 force_val=500 → force_val=1750
+- **对照 charging.c**: charging_loop 初始化阶段
+
+**2d. 充电重置** (strace 行 521-880):
+- 逐行对照 charging_dumpsys_reset() 的每个 syscall
+- 特别关注 sleep 时序
+
+**2e. RISE #2** (strace 行 1076-1155):
+- 每 ~480ms 一次 read(bcc_parms)+read(temp)+write(force_val)
+- 步长恒定 800mA
+- **对照**: 代码的 RISE 逻辑能否产生这个模式
+
+**2f. CV 衰减** (strace 行 2945-19488):
+- 提取 force_val 值序列和时间戳
+- 计算衰减速率和步长
+- **对照**: 代码的 CV 逻辑
+
+#### Phase 3: 输出差异表
+
+```markdown
+# Agent 4 交叉验证报告
+
+## 时序验证
+
+### 启动序列
+| strace 行为 | 代码对应 | 一致? |
+|------------|---------|-------|
+| ... | ... | ✅/❌ |
+
+### 充电重置 (strace 行 521-880)
+| 步骤 | strace syscall | 时间 | 代码函数 | 一致? |
+|------|---------------|------|---------|-------|
+| 1 | write force_val="0" | 16:28:23.600 | sysfs_reset_votables | ✅ |
+| ... | ... | ... | ... | ... |
+
+### RISE #2 (strace 行 1076-1155)
+| strace 时间 | force_val | 代码预期 | 差异 |
+|------------|-----------|---------|------|
+| 16:28:35.598 | 1300 | ? | ? |
+| ... | ... | ... | ... |
+
+### CV 衰减 (strace 行 2945-19488)
+(衰减速率、步长、间隔分析)
+
+## 差异汇总
+| # | 严重度 | strace 行为 | 代码行为 | 影响 | 建议 |
+|---|--------|------------|---------|------|------|
+| 1 | 高/中/低 | ... | ... | ... | ... |
+
+## 置信度统计
+```
+
+---
+
+### 9.3 已完成的审查 (Agent 2+3) 及修复
+
+以下 bug 已在 commit `4baaf0e` 中修复:
+
+| 发现 | 来源 | 修复 |
+|------|------|------|
+| dumpsys reset 后缺少 sleep(2) | Agent 3 | ✅ 已添加 |
+| ufcs_status 持久 fd 从未使用 | Agent 2 | ✅ 已移除 |
+
+Agent 2 的误报: "缺少充电控制线程 PID 15506" — 实际在 `charging.c` 的 `charging_loop()` 中，由 `main.c` 的 `charging_thread_wrapper` 创建。
+
+### 9.4 Agent 2+3 发现的待处理项 (低优先级)
+
+| 发现 | 来源 | 严重度 | 说明 |
+|------|------|--------|------|
+| config_dump 遗漏 13 个已解析键 | Agent 3 | 低 | 不影响功能，仅影响调试输出 |
+| config key 前缀匹配可能误匹配 | Agent 3 | 低 | extract_value 用 strncmp，如 "inc_step" 可能匹配 "batt_inc_step" |
+| 线程退出未重置 charging_active | Agent 3 | 中 | 信号处理场景可能残留状态 |
+| sysfs_close_all 依赖 struct 内存布局 | Agent 3 | 低 | 当前正确但脆弱 |
