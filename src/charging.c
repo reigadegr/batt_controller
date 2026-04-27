@@ -136,25 +136,26 @@ static void run_dumpsys(const char *a1, const char *a2, const char *a3)
  * strace 确认的完整序列:
  *   1. dumpsys battery set ac 1
  *   2. dumpsys battery set status 2
- *   3. dumpsys battery reset
- *   4. nanosleep(2s)
- *   5. mmi_charging_enable = "0" (禁用充电)
- *   6. nanosleep(1s)
- *   7. mmi_charging_enable = "1" (重新启用)
- *   8. nanosleep(8s) (等待充电重新初始化)
+ *   3. nanosleep(2s)
+ *   4. mmi_charging_enable = "0" (禁用充电)
+ *   5. nanosleep(1s)
+ *   6. mmi_charging_enable = "1" (重新启用)
+ *   7. nanosleep(8s) (等待充电重新初始化)
+ *   8. dumpsys battery reset (在 sleep(8) 之后执行)
  */
 void charging_dumpsys_reset(SysfsFds *fds)
 {
     run_dumpsys("set", "ac", "1");
     run_dumpsys("set", "status", "2");
-    run_dumpsys("reset", NULL, NULL);
 
-    /* strace 确认: dumpsys reset 后 sleep(2s), 然后 mmi_charging_enable 0→1 */
     sleep(2);
     sysfs_write_str(fds->mmi_charging_enable, "0");
     sleep(1);
     sysfs_write_str(fds->mmi_charging_enable, "1");
     sleep(8);
+
+    /* strace 确认: dumpsys reset 在 sleep(8) 之后执行 */
+    run_dumpsys("reset", NULL, NULL);
 }
 
 static int choose_protocol(const BattConfig *cfg, const BccParms *parms)
@@ -208,7 +209,7 @@ static int calc_poll_interval(const int soc_mon[2], const int interval_ms[2], in
     if (soc_mon[0] <= 0 && soc_mon[1] <= 0)
         return -1;
 
-    if (soc >= soc_mon[0] && soc <= soc_mon[1])
+    if (soc >= soc_mon[0] && soc < soc_mon[1])
         return interval_ms[0] > 0 ? interval_ms[0] : interval_ms[1];
 
     return interval_ms[1] > 0 ? interval_ms[1] : interval_ms[0];
@@ -474,15 +475,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
                 } else {
                     wait_counter = 0;
 
-                    if (current_ma == 500 && restart_count <= 1) {
-                        /* 首次启动: 500 → 5000 跳转 */
-                        write_current(fds, use_ufcs, 500);
-                        current_ma = 5000;
-                        write_current(fds, use_ufcs, current_ma);
-                    } else {
-                        write_current(fds, use_ufcs, current_ma);
-                        current_ma += step;
-                    }
+                    write_current(fds, use_ufcs, current_ma);
+                    current_ma += step;
                 }
             } else {
                 write_current(fds, use_ufcs, phase_max);
@@ -499,9 +493,9 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             if (cv_max > effective_max)
                 cv_max = effective_max;
 
-            /* 如果当前电流超过 CV 限制, 逐步降低 */
+            /* 如果当前电流超过 CV 限制, 逐步降低 (strace 确认步长 ~50mA) */
             if (current_ma > cv_max) {
-                current_ma -= cfg->dec_step > 0 ? cfg->dec_step : 100;
+                current_ma -= cfg->adjust_step > 0 ? cfg->adjust_step : 50;
                 if (current_ma < cv_max)
                     current_ma = cv_max;
             }
@@ -520,7 +514,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
                 tc_max = effective_max;
 
             if (current_ma > tc_max) {
-                current_ma -= cfg->dec_step > 0 ? cfg->dec_step : 100;
+                current_ma -= cfg->adjust_step > 0 ? cfg->adjust_step : 50;
                 if (current_ma < tc_max)
                     current_ma = tc_max;
             }
