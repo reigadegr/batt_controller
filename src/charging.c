@@ -48,19 +48,19 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms)
 
     if (count < 12) return -1;
 
-    /* strace 3130 次读取确认的真实字段映射 */
+    /* strace 886 次读取 + battery_log_content 交叉验证确认的字段映射 */
     parms->fcc           = fields[0];   /* 满电容量 mAh (恒定 ~5896) */
     parms->design_cap    = fields[1];   /* 设计容量 (恒定 ~5888) */
     parms->ic_param_a    = fields[2];   /* 充电IC参数A (线性递减) */
     parms->param_c       = fields[3];   /* 常量 ~2637 */
     parms->param_d       = fields[4];   /* 常量 ~2621 */
     parms->ic_param_b    = fields[5];   /* 充电IC参数B (= ic_param_a + 405) */
-    parms->vbus_mv       = fields[6];   /* 总线电压 mV */
-    parms->const_409     = fields[7];   /* 常量 409 */
+    parms->vbat_mv       = fields[6];   /* 电池电压 mV (交叉验证确认) */
+    parms->temp_01c      = fields[7];   /* 温度 0.1°C (303=30.3°C) */
     parms->ibat_ma       = fields[8];   /* 电池电流 mA (负值=充电) */
-    parms->charge_budget = fields[9];   /* 充电预算 (91→0) */
-    parms->budget_sub    = fields[10];  /* = charge_budget - 11 */
-    parms->batt_vol      = fields[11];  /* 电池电压 mV */
+    parms->thermal_hi    = fields[9];   /* 温控阈值上界 (91→85→80) */
+    parms->thermal_lo    = fields[10];  /* 温控阈值下界 (= thermal_hi - 11) */
+    parms->vbus_mv       = fields[11];  /* 总线电压 mV (精确匹配 battery_log) */
 
     if (count >= 19) {
         parms->field_12     = fields[12];
@@ -241,10 +241,10 @@ static const char *phase_name(ChargePhase ph)
 static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
                                const BccParms *parms, int soc)
 {
-    int vbat = parms->batt_vol;
+    int vbat = parms->vbat_mv;
     int ibat = parms->ibat_ma < 0 ? -parms->ibat_ma : parms->ibat_ma;
 
-    if (parms->charge_budget == 0)
+    if (parms->thermal_hi == 0)
         return PHASE_IDLE;
 
     switch (cur) {
@@ -287,11 +287,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     int current_ma = 500;
     int max_ma = cfg->ufcs_max;
     int cable_max = 0;
-    int wait_counter = 0;
     int use_ufcs = 1;
     int inc_step = cfg->inc_step;
+    int ramp_idx = 0;
     int restart_count = 0;
-    int prev_ufcs_en = -1;
     int in_charge_cycle = 0;
     int soc = 0;
     ChargePhase phase = PHASE_IDLE;
@@ -313,6 +312,9 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     if (cable_max > 0 && cable_max < max_ma)
         max_ma = cable_max;
 
+    /* strace 确认: inc_step = effective_max / 10 */
+    inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
+
     /* ---- 阶段 4: 输出充电信息日志 ---- */
     get_timestamp(ts, sizeof(ts));
     snprintf(line, sizeof(line),
@@ -333,17 +335,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
         /* 读取 SoC */
         soc = sysfs_read_int(fds->chip_soc);
 
-        /* 检测 ufcs_en 状态变化: 1→0 时切换步长为 STEP_VOTER/10 */
-        if (parms.ufcs_en != prev_ufcs_en) {
-            if (prev_ufcs_en == 1 && parms.ufcs_en == 0 && voters.step_ma > 0) {
-                inc_step = voters.step_ma / 10;
-            } else if (parms.ufcs_en == 1) {
-                inc_step = cfg->inc_step;
-            }
-            prev_ufcs_en = parms.ufcs_en;
-        }
-
-        /* 读取电池温度 */
+        /* 读取电池温度 (strace 确认用 bcc_parms field[7] 即 temp_01c) */
         sysfs_read_int(fds->battery_temp);
 
         /*
@@ -351,10 +343,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
          * charge_budget 从非零变为 0 时触发 dumpsys 重启
          * 需要先经过非零状态 (in_charge_cycle=1) 才触发
          */
-        if (parms.charge_budget > 0)
+        if (parms.thermal_hi > 0)
             in_charge_cycle = 1;
 
-        if (parms.charge_budget == 0 && in_charge_cycle) {
+        if (parms.thermal_hi == 0 && in_charge_cycle) {
             /* 重置所有 votable */
             sysfs_reset_votables(fds);
 
@@ -400,10 +392,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             if (cable_max > 0 && cable_max < max_ma)
                 max_ma = cable_max;
 
-            if (voters.step_ma > 0)
-                inc_step = voters.step_ma / 10;
-            else
-                inc_step = cfg->inc_step;
+            /* strace 确认: inc_step = effective_max / 10 (非 step_ma / 10) */
+            inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
 
             get_timestamp(ts, sizeof(ts));
             snprintf(line, sizeof(line),
@@ -411,16 +401,15 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
                      ts, use_ufcs ? "UFCS" : "PPS", max_ma, ++restart_count);
             log_write(line);
 
-            current_ma = 1000;
-            wait_counter = 0;
-            prev_ufcs_en = -1;
+            current_ma = 500;
+            ramp_idx = 0;
             in_charge_cycle = 0;
             phase = PHASE_IDLE;
             continue;
         }
 
-        /* 温控: 根据温度调整最大电流 (注: ic_param_a 非温度, 仅为字段重命名, 算法修正另做) */
-        int temp_offset = get_temp_curr_offset(cfg, parms.ic_param_a);
+        /* 温控: 根据温度调整最大电流 (strace 确认 temp_01c = battery_temp) */
+        int temp_offset = get_temp_curr_offset(cfg, parms.temp_01c);
         int effective_max = max_ma;
         if (temp_offset > 0 && effective_max > temp_offset)
             effective_max = temp_offset;
@@ -433,7 +422,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             snprintf(line, sizeof(line),
                      "%s ==== Phase %s -> %s (vbat=%dmV, soc=%d%%) ====\n",
                      ts, phase_name(phase), phase_name(new_phase),
-                     parms.batt_vol, soc);
+                     parms.vbat_mv, soc);
             log_write(line);
             phase = new_phase;
         }
@@ -445,42 +434,52 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         case PHASE_RISE: {
             /*
-             * RISE 阶段: 电流递增
-             * - vbat < rise_quickstep_thr_mv: 快速递增 (全步长)
-             * - rise_quickstep_thr_mv <= vbat < rise_wait_thr_mv: 减速
-             * - vbat >= rise_wait_thr_mv: 低速等待进入 CV
+             * RISE 三段式 (strace 确认):
+             * 1. Quickstart: 500→1400 (同迭代双写, 无 sleep)
+             * 2. 递增斜坡: +750, +350, +450, +550
+             *    公式: round_to_50(cable_max / (22 - 4*ramp_idx))
+             * 3. 全速步进: +800 (= cable_max/10) 直到 cap
              */
-            int step = inc_step;
-
-            if (cfg->rise_quickstep_thr_mv > 0 &&
-                parms.batt_vol >= cfg->rise_quickstep_thr_mv) {
-                /* 接近 CV 阈值, 减速 */
-                step = inc_step / 4;
-                if (step < 50) step = 50;
-            } else if (cfg->rise_wait_thr_mv > 0 &&
-                       parms.batt_vol >= cfg->rise_wait_thr_mv) {
-                /* 更接近, 进一步减速 */
-                step = inc_step / 8;
-                if (step < 25) step = 25;
-            }
-
-            /* 温控限制 */
             int phase_max = effective_max;
 
-            if (current_ma <= phase_max) {
-                if (cfg->curr_inc_wait_cycles > 0 &&
-                    wait_counter < cfg->curr_inc_wait_cycles) {
-                    wait_counter++;
-                    write_current(fds, use_ufcs, current_ma);
-                } else {
-                    wait_counter = 0;
-
-                    write_current(fds, use_ufcs, current_ma);
-                    current_ma += step;
-                }
-            } else {
-                write_current(fds, use_ufcs, phase_max);
+            if (current_ma == 500 && ramp_idx == 0) {
+                /* Quickstart: 写 500 后立即写 1400 */
+                int qs_step = (cable_max * 9) / 80;
+                qs_step = ((qs_step + 25) / 50) * 50;
+                write_current(fds, use_ufcs, 500);
+                current_ma = 500 + qs_step;
+                write_current(fds, use_ufcs, current_ma);
+                ramp_idx = 1;
+                break;
             }
+
+            if (current_ma >= phase_max) {
+                /* 到达 cap, 维持但不重复写入 */
+                break;
+            }
+
+            int step;
+            if (ramp_idx == 1) {
+                /* 首个斜坡步: 推测 cable_max*3/32 ≈ 750 */
+                step = (cable_max * 3) / 32;
+                step = ((step + 25) / 50) * 50;
+            } else {
+                int divisor = 22 - 4 * (ramp_idx - 2);
+                if (divisor <= 10) {
+                    step = cable_max > 0 ? cable_max / 10 : inc_step;
+                } else {
+                    step = (cable_max + divisor / 2) / divisor;
+                    step = ((step + 25) / 50) * 50;
+                    if (step > inc_step) step = inc_step;
+                }
+            }
+
+            current_ma += step;
+            if (current_ma > phase_max)
+                current_ma = phase_max;
+
+            write_current(fds, use_ufcs, current_ma);
+            ramp_idx++;
             break;
         }
 
@@ -531,11 +530,11 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         /* 满电判断: batt_full_thr_mv 额外检查 */
         if (phase != PHASE_FULL && cfg->batt_full_thr_mv > 0 &&
-            parms.batt_vol >= cfg->batt_full_thr_mv) {
+            parms.vbat_mv >= cfg->batt_full_thr_mv) {
             get_timestamp(ts, sizeof(ts));
             snprintf(line, sizeof(line),
                      "%s ==== Battery full: vbat=%dmV >= batt_full_thr_mv=%dmV ====\n",
-                     ts, parms.batt_vol, cfg->batt_full_thr_mv);
+                     ts, parms.vbat_mv, cfg->batt_full_thr_mv);
             log_write(line);
             phase = PHASE_FULL;
         }

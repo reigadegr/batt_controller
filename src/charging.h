@@ -26,22 +26,22 @@ typedef enum {
 } ChargePhase;
 
 /* bcc_parms 解析结果 (19 个逗号分隔值) */
-/* strace 3130 次读取确认的真实字段映射 */
+/* strace 886 次读取 + battery_log_content 交叉验证确认的真实字段映射 */
 typedef struct {
     int fcc;               /* fields[0]:  满电容量 mAh (恒定 ~5896) */
     int design_cap;        /* fields[1]:  设计容量 (恒定 ~5888) */
-    int ic_param_a;        /* fields[2]:  充电IC参数A (线性递减, 1175→-697) */
+    int ic_param_a;        /* fields[2]:  充电IC参数A (线性递减, 1489→492) */
     int param_c;           /* fields[3]:  常量 ~2637 */
     int param_d;           /* fields[4]:  常量 ~2621 */
     int ic_param_b;        /* fields[5]:  充电IC参数B (= ic_param_a + 405) */
-    int vbus_mv;           /* fields[6]:  总线电压 (mV), 随充电升高 */
-    int const_409;         /* fields[7]:  常量 409 */
+    int vbat_mv;           /* fields[6]:  电池电压 (mV), 交叉验证确认 */
+    int temp_01c;          /* fields[7]:  电池温度 (0.1°C), 303=30.3°C */
     int ibat_ma;           /* fields[8]:  电池电流 (mA, 负值=充电) */
-    int charge_budget;     /* fields[9]:  充电预算 (91→0, dumpsys reset 后复位) */
-    int budget_sub;        /* fields[10]: = charge_budget - 11 */
-    int batt_vol;          /* fields[11]: 电池电压 (mV), 随充电升高 */
-    int field_12;          /* fields[12]: 未知, 通常 0 */
-    int field_13;          /* fields[13]: 未知, 通常 0 */
+    int thermal_hi;        /* fields[9]:  温控阈值上界 (91→85→80, 三档阶梯) */
+    int thermal_lo;        /* fields[10]: 温控阈值下界 (= thermal_hi - 11) */
+    int vbus_mv;           /* fields[11]: 总线电压 (mV), 精确匹配 battery_log */
+    int field_12;          /* fields[12]: 保留, 通常 0 */
+    int field_13;          /* fields[13]: 保留, 通常 0 */
     int ufcs_max_ma;       /* fields[14]: UFCS 最大电流 */
     int ufcs_en;           /* fields[15]: UFCS 使能 */
     int pps_max_ma;        /* fields[16]: PPS 最大电流 */

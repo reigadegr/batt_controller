@@ -23,7 +23,6 @@ typedef struct {
     /* 电流调节步长 */
     int      adjust_step;                    /* 电流微调步长 (mA) */
     int      inc_step;                       /* 电流递增步长 (mA) */
-    int      dec_step;                       /* 电流递减步长 (mA) */
 
     /* UFCS 快充 */
     int      max_ufcs_chg_reset_cc;          /* UFCS 充电重置计数 */

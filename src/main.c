@@ -58,7 +58,6 @@ static void load_config(BattConfig *cfg)
         cfg->enabled = 1;
         cfg->adjust_step = 50;
         cfg->inc_step = 100;
-        cfg->dec_step = 100;
         cfg->ufcs_max = 9100;
         cfg->pps_max = 5000;
         cfg->loop_interval_ms = 2000;

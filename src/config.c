@@ -43,8 +43,13 @@ int config_parse(const char *path, BattConfig *cfg)
     cfg->enabled = 1;
     cfg->adjust_step = 50;
     cfg->inc_step = 100;
-    cfg->dec_step = 100;
     cfg->loop_interval_ms = 2000;
+
+    /* strace 确认: SoC<20 → 450ms, SoC≥20 → 650ms */
+    cfg->ufcs_soc_mon[0] = 20;
+    cfg->ufcs_soc_mon[1] = 60;
+    cfg->ufcs_interval_ms[0] = 450;
+    cfg->ufcs_interval_ms[1] = 650;
 
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
@@ -63,8 +68,6 @@ int config_parse(const char *path, BattConfig *cfg)
             cfg->adjust_step = atoi(v);
         } else if ((v = extract_value(line, "inc_step"))) {
             cfg->inc_step = atoi(v);
-        } else if ((v = extract_value(line, "dec_step"))) {
-            cfg->dec_step = atoi(v);
         } else if ((v = extract_value(line, "max_ufcs_chg_reset_cc"))) {
             cfg->max_ufcs_chg_reset_cc = atoi(v);
         } else if ((v = extract_value(line, "ufcs_reset_delay"))) {
@@ -158,7 +161,6 @@ void config_dump(const BattConfig *cfg)
 
     printf("adjust_step: %d\n", cfg->adjust_step);
     printf("inc_step: %d\n", cfg->inc_step);
-    printf("dec_step: %d\n", cfg->dec_step);
 
     printf("batt_vol_thr: %d %d\n", cfg->batt_vol_thr[0], cfg->batt_vol_thr[1]);
     printf("batt_vol_soc: %d %d\n", cfg->batt_vol_soc[0], cfg->batt_vol_soc[1]);
