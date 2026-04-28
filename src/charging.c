@@ -126,28 +126,12 @@ static void run_dumpsys(const char *a1, const char *a2, const char *a3)
 
 /*
  * 充电重置序列
- * strace 确认的完整序列:
- *   1. dumpsys battery set ac 1
- *   2. dumpsys battery set status 2
- *   3. nanosleep(2s)
- *   4. mmi_charging_enable = "0" (禁用充电)
- *   5. nanosleep(1s)
- *   6. mmi_charging_enable = "1" (重新启用)
- *   7. nanosleep(8s) (等待充电重新初始化)
- *   8. dumpsys battery reset (在 sleep(8) 之后执行)
+ * strace 确认 (2026-04-28 完整充电周期验证):
+ * 仅执行 dumpsys battery reset, 不含 mmi_charging_enable 写入
  */
 void charging_dumpsys_reset(SysfsFds *fds)
 {
-    run_dumpsys("set", "ac", "1");
-    run_dumpsys("set", "status", "2");
-
-    sleep(2);
-    sysfs_write_str(fds->mmi_charging_enable, "0");
-    sleep(1);
-    sysfs_write_str(fds->mmi_charging_enable, "1");
-    sleep(8);
-
-    /* strace 确认: dumpsys reset 在 sleep(8) 之后执行 */
+    (void)fds;
     run_dumpsys("reset", NULL, NULL);
 }
 
@@ -204,11 +188,13 @@ static int clamp_max_ma(int cfg_max, int proto_max, int cable_max)
 static const char *phase_name(ChargePhase ph)
 {
     switch (ph) {
-    case PHASE_IDLE: return "IDLE";
-    case PHASE_RISE: return "RISE";
-    case PHASE_CV:   return "CV";
-    case PHASE_TC:   return "TC";
-    case PHASE_FULL: return "FULL";
+    case PHASE_IDLE:         return "IDLE";
+    case PHASE_RISE:         return "RISE";
+    case PHASE_RESTART_RISE: return "RESTART_RISE";
+    case PHASE_CV:           return "CV";
+    case PHASE_TC:           return "TC";
+    case PHASE_DEPOL:        return "DEPOL";
+    case PHASE_FULL:         return "FULL";
     }
     return "?";
 }
@@ -216,18 +202,22 @@ static const char *phase_name(ChargePhase ph)
 /*
  * 充电阶段状态机转换
  *
- * RISE → CV:   vbat >= cv_vol_mv
- * CV   → TC:   soc >= tc_thr_soc || vbat >= tc_vol_thr_mv
- * TC   → FULL: |ibat| <= tc_full_ma && vbat >= tc_vol_full_mv
- * ANY  → IDLE: charge_status == 0
+ * RISE → CV:            vbat >= cv_vol_mv
+ * RESTART_RISE → CV:    vbat >= cv_vol_mv
+ * CV   → TC:            soc >= tc_thr_soc || vbat >= tc_vol_thr_mv
+ * TC   → DEPOL:         current_ma 很低 (接近 0)
+ * TC   → FULL:          |ibat| <= tc_full_ma && vbat >= tc_vol_full_mv
+ * DEPOL → RESTART_RISE: 去极化完成
+ * FULL → IDLE:          等待 dumpsys reset 后由外层切到 RESTART_RISE
+ * ANY  → IDLE:          charge_status == 0
  */
 static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
-                               const BccParms *parms, int soc)
+                               const BccParms *parms, int soc, int current_ma)
 {
     int vbat = parms->vbat_mv;
     int ibat = parms->ibat_ma < 0 ? -parms->ibat_ma : parms->ibat_ma;
 
-    if (parms->thermal_hi == 0)
+    if (parms->thermal_hi == 0 && cur != PHASE_DEPOL && cur != PHASE_RESTART_RISE)
         return PHASE_IDLE;
 
     switch (cur) {
@@ -239,6 +229,11 @@ static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
             return PHASE_CV;
         return PHASE_RISE;
 
+    case PHASE_RESTART_RISE:
+        if (cfg->cv_vol_mv > 0 && vbat >= cfg->cv_vol_mv)
+            return PHASE_CV;
+        return PHASE_RESTART_RISE;
+
     case PHASE_CV:
         if (cfg->tc_thr_soc > 0 && soc >= cfg->tc_thr_soc)
             return PHASE_TC;
@@ -247,10 +242,15 @@ static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
         return PHASE_CV;
 
     case PHASE_TC:
+        if (current_ma <= 100)
+            return PHASE_DEPOL;
         if (cfg->tc_full_ma > 0 && cfg->tc_vol_full_mv > 0 &&
             ibat <= cfg->tc_full_ma && vbat >= cfg->tc_vol_full_mv)
             return PHASE_FULL;
         return PHASE_TC;
+
+    case PHASE_DEPOL:
+        return PHASE_RESTART_RISE;
 
     case PHASE_FULL:
         return PHASE_FULL;
@@ -323,13 +323,14 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         /*
          * 充电周期结束检测:
-         * charge_budget 从非零变为 0 时触发 dumpsys 重启
-         * 需要先经过非零状态 (in_charge_cycle=1) 才触发
+         * strace 确认 (2026-04-28 完整周期): thermal_hi 降到极低值 (<=20)
+         * 而非归零。SoC=100% 时 thermal_hi=0。
+         * 触发条件: thermal_hi 从非零降到 <=20 且已进入充电周期
          */
         if (parms.thermal_hi > 0)
             in_charge_cycle = 1;
 
-        if (parms.thermal_hi == 0 && in_charge_cycle) {
+        if (parms.thermal_hi <= 20 && in_charge_cycle) {
             /* 重置所有 votable */
             sysfs_reset_votables(fds);
 
@@ -379,7 +380,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             cv_step_idx = 0;
             cv_holding = 0;
             in_charge_cycle = 0;
-            phase = PHASE_RISE;
+            phase = PHASE_RESTART_RISE;
             continue;
         }
 
@@ -401,7 +402,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             effective_max = voters.step_ma;
 
         /* ---- 充电阶段状态机 ---- */
-        ChargePhase new_phase = next_phase(phase, cfg, &parms, soc);
+        ChargePhase new_phase = next_phase(phase, cfg, &parms, soc, current_ma);
 
         if (new_phase != phase) {
             get_timestamp(ts, sizeof(ts));
@@ -418,17 +419,26 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             /* 未充电, 不做操作 */
             break;
 
-        case PHASE_RISE: {
-            /*
-             * RISE 三段式 (strace + 逆向确认):
-             * 1. Quickstart: 500 + round_to_50(cable_max * 13/80)
-             *    公式: step = cable_max * 13 / 80
-             * 2. 递增斜坡: 剩余距离除法
-             *    ramp_idx=1: step = round_to_50((cable_max - current) / 17)
-             *    ramp_idx=2~4: step = round_to_50((cable_max - current) / 11)
-             * 3. 全速步进: step = cable_max / 10 直到 cap
-             */
+        case PHASE_RISE:
+        case PHASE_RESTART_RISE: {
             int phase_max = effective_max;
+
+            if (phase == PHASE_RESTART_RISE) {
+                /* 重启 RISE: +50mA 线性爬升, 无 quickstart
+                 * strace 确认 (2026-04-28 完整周期):
+                 * 550→600→650→...→3500, 每步 +50mA, ~480ms 间隔
+                 */
+                int step = cfg->restart_rise_step > 0 ? cfg->restart_rise_step : 50;
+                if (current_ma < phase_max) {
+                    current_ma += step;
+                    if (current_ma > phase_max)
+                        current_ma = phase_max;
+                    write_current(fds, use_ufcs, current_ma);
+                }
+                break;
+            }
+
+            /* 以下为首次充电的 quickstart 三段式 RISE */
 
             if (current_ma == 500 && ramp_idx == 0) {
                 /* Quickstart: 写 500 后立即写高值
@@ -492,7 +502,19 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
              * 阶梯全部走完后进入 cv_holding 静默模式。
              */
             if (cv_holding) {
-                /* 阶梯已走完, 静默维持, 不写入 force_val */
+                /* 阶梯已走完, 静默维持。
+                 * strace 确认 (2026-04-28): CV 阶段有振荡回升
+                 * (3000↔2950↔3000), vbat 回落时可回到较低阶梯。
+                 */
+                for (int i = 0; i < cv_step_idx; i++) {
+                    if (parms.vbat_mv < cfg->cv_step_mv[i]) {
+                        current_ma = (i > 0) ? cfg->cv_step_ma[i - 1] : current_ma;
+                        cv_step_idx = i;
+                        cv_holding = 0;
+                        write_current(fds, use_ufcs, current_ma);
+                        break;
+                    }
+                }
                 break;
             }
 
@@ -548,6 +570,40 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
                 if (current_ma < cap) current_ma = cap;
                 write_current(fds, use_ufcs, current_ma);
             }
+            break;
+        }
+
+        case PHASE_DEPOL: {
+            /* 去极化阶段 (strace 2026-04-28 完整周期确认):
+             * force_val 写极低值和 0, 让内核驱动执行去极化。
+             * 观测序列: 50→500→300→250→50→0, 可多轮。
+             */
+            int pulse = cfg->depol_pulse_ma > 0 ? cfg->depol_pulse_ma : 500;
+
+            /* 写脉冲电流 */
+            write_current(fds, use_ufcs, pulse);
+            usleep(500000);
+
+            /* 逐步降到 0 */
+            for (int v = pulse - 200; v >= 0; v -= 50) {
+                if (!*running) break;
+                write_current(fds, use_ufcs, v > 0 ? v : 0);
+                usleep(500000);
+            }
+
+            /* 写 0 */
+            write_current(fds, use_ufcs, 0);
+
+            get_timestamp(ts, sizeof(ts));
+            snprintf(line, sizeof(line),
+                     "%s ==== DEPOL complete, preparing restart ====\n", ts);
+            log_write(line);
+
+            /* 去极化完成, 重置状态准备重启 */
+            current_ma = 500;
+            ramp_idx = 0;
+            cv_step_idx = 0;
+            cv_holding = 0;
             break;
         }
 

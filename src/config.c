@@ -46,6 +46,9 @@ int config_parse(const char *path, BattConfig *cfg)
     cfg->adjust_step = 50;
     cfg->inc_step = 100;
     cfg->loop_interval_ms = 2000;
+    cfg->restart_rise_step = 50;
+    cfg->depol_pulse_ma = 500;
+    cfg->depol_zero_ma = 0;
 
     /* strace 确认: SoC<20 → 450ms, SoC≥20 → 650ms */
     cfg->ufcs_soc_mon[0] = 20;
@@ -124,6 +127,12 @@ int config_parse(const char *path, BattConfig *cfg)
             cfg->curr_inc_wait_cycles = atoi(v);
         } else if ((v = extract_value(line, "batt_full_thr_mv"))) {
             cfg->batt_full_thr_mv = atoi(v);
+        } else if ((v = extract_value(line, "restart_rise_step"))) {
+            cfg->restart_rise_step = atoi(v);
+        } else if ((v = extract_value(line, "depol_pulse_ma"))) {
+            cfg->depol_pulse_ma = atoi(v);
+        } else if ((v = extract_value(line, "depol_zero_ma"))) {
+            cfg->depol_zero_ma = atoi(v);
         } else if ((v = extract_value(line, "enabled"))) {
             cfg->enabled = atoi(v);
         }
@@ -185,6 +194,10 @@ void config_dump(const BattConfig *cfg)
     printf("ufcs_interval_ms: %d %d\n", cfg->ufcs_interval_ms[0], cfg->ufcs_interval_ms[1]);
     printf("pps_soc_mon: %d %d\n", cfg->pps_soc_mon[0], cfg->pps_soc_mon[1]);
     printf("pps_interval_ms: %d %d\n", cfg->pps_interval_ms[0], cfg->pps_interval_ms[1]);
+
+    printf("restart_rise_step: %d\n", cfg->restart_rise_step);
+    printf("depol_pulse_ma: %d\n", cfg->depol_pulse_ma);
+    printf("depol_zero_ma: %d\n", cfg->depol_zero_ma);
 
     printf("loop_interval_ms: %d\n", cfg->loop_interval_ms);
     printf("============================\n");

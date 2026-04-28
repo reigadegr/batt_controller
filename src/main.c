@@ -76,6 +76,9 @@ static void load_config(BattConfig *cfg)
         cfg->ufcs_max = 9100;
         cfg->pps_max = 5000;
         cfg->loop_interval_ms = 2000;
+        cfg->restart_rise_step = 50;
+        cfg->depol_pulse_ma = 500;
+        cfg->depol_zero_ma = 0;
     }
 }
 

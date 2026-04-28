@@ -18,11 +18,13 @@
 
 /* 充电阶段 */
 typedef enum {
-    PHASE_IDLE,     /* 未充电 */
-    PHASE_RISE,     /* 上升阶段: 电流递增 */
-    PHASE_CV,       /* 恒压阶段: 电压达标, 限流 */
-    PHASE_TC,       /* 涓流阶段: 高 SoC 低电流 */
-    PHASE_FULL,     /* 满电 */
+    PHASE_IDLE,          /* 未充电 */
+    PHASE_RISE,          /* 上升阶段: 首次充电 quickstart 三段式 */
+    PHASE_RESTART_RISE,  /* 重启上升: dumpsys reset 后 +50mA 线性爬升 */
+    PHASE_CV,            /* 恒压阶段: 电压达标, 限流 */
+    PHASE_TC,            /* 涓流阶段: 高 SoC 低电流 */
+    PHASE_DEPOL,         /* 去极化阶段: force_val 写 0 和极低值 */
+    PHASE_FULL,          /* 满电 */
 } ChargePhase;
 
 /* bcc_parms 解析结果 (19 个逗号分隔值) */
@@ -64,9 +66,9 @@ int charging_parse_bcc_parms(const char *str, BccParms *parms);
 int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters);
 
 /*
- * 充电重置序列 (strace 确认)
- * fork+execvp 执行: battery set ac 1, battery set status 2, battery reset
- * 然后: mmi_charging_enable 0 → sleep 1s → mmi_charging_enable 1 → sleep 8s
+ * 充电重置序列 (strace 确认, 2026-04-28 完整周期验证)
+ * 仅执行: dumpsys battery reset
+ * 不含 mmi_charging_enable 写入
  */
 void charging_dumpsys_reset(SysfsFds *fds);
 

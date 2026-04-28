@@ -70,6 +70,13 @@ typedef struct {
     int      curr_inc_wait_cycles;           /* 电流递增等待周期 */
     int      batt_full_thr_mv;               /* 电池满电阈值 (mV) */
 
+    /* 重启 RISE 阶段 */
+    int      restart_rise_step;              /* 重启 RISE 步长 (mA), 默认 50 */
+
+    /* 去极化阶段 */
+    int      depol_pulse_ma;                 /* 去极化脉冲电流 (mA), 默认 500 */
+    int      depol_zero_ma;                  /* 去极化零电流 (mA), 默认 0 */
+
     /* 使能标志 */
     int      enabled;                        /* 总开关 */
 } BattConfig;
