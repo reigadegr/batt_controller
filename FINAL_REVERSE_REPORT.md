@@ -222,16 +222,16 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | USB 拔出后 fd 生命周期管理 | ✅ |
 | 11 个 bug 修复 (4 agent 审查) | ✅ |
 
-### 需要修正/新增 ❌
+### 已完成的修正/新增 ✅ (2026-04-28)
 
-| # | 功能 | 当前状态 | 需要的改动 |
-|---|------|---------|-----------|
-| 1 | **重启 RISE (+50mA 线性)** | 只有 quickstart 三段式 | 新增 PHASE_RESTART_RISE，+50mA/步 |
-| 2 | **去极化阶段** | 不存在 | 新增 PHASE_DEPOL，写 0→500→...→0 |
-| 3 | **CV 振荡/电流回升** | CV 只减不增 | CV 阶段允许 vbat 回落时回升 |
-| 4 | **充电周期结束检测** | thermal_hi==0 触发 | 改为 thermal_hi<=极低阈值 + dumpsys reset |
-| 5 | **dumpsys reset 序列** | 包含 mmi_charging_enable 0→1 | 去掉 mmi toggle，只做 dumpsys reset |
-| 6 | **effective_max 计算** | 不考虑 ufcs_max_ma 变化 | thermal_hi 极低时 ufcs_max 也变小 |
+| # | 功能 | 改动 |
+|---|------|------|
+| 1 | **重启 RISE (+50mA 线性)** | ✅ PHASE_RESTART_RISE，+50mA/步，无 quickstart |
+| 2 | **去极化阶段** | ✅ PHASE_DEPOL，pulse→降→0，多轮 |
+| 3 | **CV 振荡/电流回升** | ✅ cv_holding 中检查 vbat 回落到较低阶梯 |
+| 4 | **充电周期结束检测** | ✅ thermal_hi ≤ 20 + current_ma ≤ 100 → dumpsys reset |
+| 5 | **dumpsys reset 序列** | ✅ 只做 dumpsys battery reset，无 mmi toggle |
+| 6 | **effective_max + ufcs_max_ma** | ⚠️ 未额外限制，thermal_hi×100 已间接覆盖（见"仍需验证"） |
 
 ### 仍需更多数据 ⚠️
 
@@ -257,148 +257,37 @@ config 值硬编码在二进制中，字符串全部 XOR 混淆。
 
 ---
 
-## 八、待实现功能（接手 AI 任务清单）
+## 八、已实现功能清单 ✅
 
 > 数据来源: `strace_20260428_154917_attach.log` (完整充电周期, 17788 行)
-> 当前源码: `src/charging.c`, `src/charging.h`, `src/config.h`, `src/config.c`, `src/main.c`
+> 以下任务全部已在 src 中实现 (2026-04-28)。
 
-### 8.1 新增充电阶段枚举 (`charging.h`)
+| # | 功能 | 文件 | 状态 |
+|---|------|------|------|
+| 1 | PHASE_RESTART_RISE + PHASE_DEPOL 枚举 | `charging.h` | ✅ |
+| 2 | restart_rise_step / depol_pulse_ma / depol_zero_ma 配置字段 | `config.h` | ✅ |
+| 3 | 新配置键解析 + config_dump 输出 | `config.c` | ✅ |
+| 4 | load_config 默认值 | `main.c` | ✅ |
+| 5 | dumpsys_reset（去掉 mmi_charging_enable toggle） | `charging.c` | ✅ |
+| 6 | 周期结束检测（thermal_hi ≤ 20 + current_ma ≤ 100） | `charging.c` | ✅ |
+| 7 | PHASE_RESTART_RISE（+50mA 线性爬升，无 quickstart） | `charging.c` | ✅ |
+| 8 | PHASE_DEPOL（pulse→降→0） | `charging.c` | ✅ |
+| 9 | CV 阶段振荡回升（vbat 回落到较低阶梯） | `charging.c` | ✅ |
+| 10 | phase_name / next_phase 更新 | `charging.c` | ✅ |
 
-在 `ChargePhase` 枚举中新增两个阶段：
+### 待验证事项
 
-```c
-typedef enum {
-    PHASE_IDLE,
-    PHASE_RISE,           /* 首次上升: quickstart 三段式 (已有) */
-    PHASE_RESTART_RISE,   /* 重启上升: +50mA 线性爬升 (新增) */
-    PHASE_CV,             /* 恒压阶段: 阶梯降流 + 振荡 (已有, 需改) */
-    PHASE_TC,             /* 涓流阶段: 极低电流 (已有, 需改) */
-    PHASE_DEPOL,          /* 去极化: force_val 写 0 和极低值 (新增) */
-    PHASE_FULL,           /* 满电 (已有) */
-} ChargePhase;
-```
+| 功能 | 说明 |
+|------|------|
+| DEPOL 执行时机 | thermal_hi ≤ 20 + current_ma ≤ 100 同时满足时，周期结束检测先触发 RESTART_RISE 跳过 DEPOL；需实际 strace 验证 |
+| quickstart 系数 | 公式 `cable_max * X / 80`，X=9~21 可能与温度相关 |
+| adjust_step 触发 | 可能是剩余距离驱动而非固定 ramp_idx |
+| BATT_SOC_VOTER | 本次 SoC=100% 时 thermal_hi=0，未见该 voter 激活 |
+| effective_max + ufcs_max_ma | thermal_hi×100 已间接覆盖，但 thermal_hi 极低时 ufcs_max 本身也变小，未显式处理 |
 
-### 8.2 新增配置字段 (`config.h` + `config.c`)
+### 验证方法
 
-在 `BattConfig` 结构体中新增：
-
-```c
-int restart_rise_step;   /* 重启 RISE 步长 (mA), 默认 50 */
-int depol_pulse_ma;      /* 去极化脉冲电流 (mA), 默认 500 */
-int depol_zero_ma;       /* 去极化零电流阈值 (mA), 默认 0 */
-```
-
-config.c 中新增解析 + config_dump 输出 + main.c load_config 设置默认值。
-
-### 8.3 修复 dumpsys_reset (`charging.c`)
-
-**当前**: dumpsys reset + mmi_charging_enable 0→1 + sleep 2+1+8 秒
-**应改为**: 只做 `run_dumpsys("reset", NULL, NULL)`，去掉 mmi toggle 和 sleep
-
-strace 确认: 充电周期结束后**没有** mmi_charging_enable 写入，只有 dumpsys battery reset。
-
-### 8.4 修复充电周期结束检测 (`charging.c`)
-
-**当前**: `thermal_hi == 0` 触发 dumpsys reset
-**应改为**: `thermal_hi <= 20 && current_ma <= 100` 触发 dumpsys reset
-
-strace 确认: thermal_hi 在满电后期是 21（不是 0），SoC=100% 时才到 0。
-周期结束标志是 force_val 已降到极低（≤100mA）+ thermal_hi 很低（≤20）。
-
-触发后: dumpsys reset → phase = PHASE_RESTART_RISE, current_ma = 500。
-
-### 8.5 新增 PHASE_RESTART_RISE 处理 (`charging.c`)
-
-充电结束后重启的 RISE 阶段，+50mA 线性爬升，**没有 quickstart**。
-
-```c
-case PHASE_RESTART_RISE: {
-    int step = cfg->restart_rise_step > 0 ? cfg->restart_rise_step : 50;
-    int phase_max = effective_max;
-    if (current_ma < phase_max) {
-        current_ma += step;
-        if (current_ma > phase_max) current_ma = phase_max;
-        write_current(fds, use_ufcs, current_ma);
-    }
-    break;
-}
-```
-
-转入条件: dumpsys reset 后
-转出条件: vbat >= cv_vol_mv → PHASE_CV
-
-### 8.6 新增 PHASE_DEPOL 处理 (`charging.c`)
-
-去极化阶段: force_val 写脉冲值然后逐步降到 0。
-
-strace 观测到: `50→500→300→250→50→0` 然后 `500→300→250→50→0`（两轮）
-
-```c
-case PHASE_DEPOL: {
-    int pulse = cfg->depol_pulse_ma > 0 ? cfg->depol_pulse_ma : 500;
-    /* 脉冲 */
-    write_current(fds, use_ufcs, pulse);
-    usleep(500000);
-    /* 逐步降到 0 */
-    for (int v = 200; v >= 0; v -= 50) {
-        if (!*running) break;
-        write_current(fds, use_ufcs, v);
-        usleep(500000);
-    }
-    write_current(fds, use_ufcs, 0);
-    /* 去极化完成 → 重启 RISE */
-    current_ma = 500;
-    ramp_idx = 0;
-    phase = PHASE_RESTART_RISE;
-    break;
-}
-```
-
-转入条件: PHASE_TC 中 force_val 降到 ≤ 50mA
-转出条件: 写完 0 后直接转 PHASE_RESTART_RISE
-
-### 8.7 修复 CV 阶段 — 允许电流回升 (`charging.c`)
-
-strace 观测到 CV 振荡: 3000↔2950↔3000 (+50mA 回升)。
-
-当前 CV 阶梯走完后进入 cv_holding 静默模式（只减不增）。
-需增加: 如果 vbat 回落到低于当前阶梯阈值，回到较低阶梯（电流回升）。
-
-```c
-if (cv_holding) {
-    /* 检查 vbat 回落 — 允许电流回升 */
-    for (int i = 0; i < cv_step_idx; i++) {
-        if (parms.vbat_mv < cfg->cv_step_mv[i]) {
-            current_ma = (i > 0) ? cfg->cv_step_ma[i - 1] : current_ma;
-            cv_step_idx = i;
-            cv_holding = 0;
-            write_current(fds, use_ufcs, current_ma);
-            break;
-        }
-    }
-    break;
-}
-```
-
-### 8.8 更新 phase_name 和 next_phase (`charging.c`)
-
-`phase_name()` 新增:
-```c
-case PHASE_RESTART_RISE: return "RESTART_RISE";
-case PHASE_DEPOL:        return "DEPOL";
-```
-
-`next_phase()` 新增转换:
-- PHASE_FULL → PHASE_RESTART_RISE (dumpsys reset 后)
-- PHASE_RESTART_RISE → PHASE_CV (vbat >= cv_vol_mv)
-- PHASE_TC → PHASE_DEPOL (current_ma <= 50)
-- PHASE_DEPOL → PHASE_RESTART_RISE (去极化完成)
-
-### 8.9 验证
-
-改完后执行:
 ```bash
 cd /data/data/com.termux/files/home/batt/src && make clean && make
 ```
-
-确保编译通过，然后可以 strace 对比 original 和 mine 的完整充电周期行为。
+然后 strace 对比 original 和 mine 的完整充电周期行为。
