@@ -1,38 +1,10 @@
 #include "charging.h"
+#include "charging_internal.h"
 
-#include <fcntl.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
-
-/* 获取时间戳字符串 "[YYYY-MM-DD-HH:MM:SS]" */
-static void get_timestamp(char *buf, int bufsz)
-{
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(buf, bufsz, "[%Y-%m-%d-%H:%M:%S]", t);
-}
-
-/*
- * 写日志到 /data/opbatt/battchg.log 和 stdout
- * strace 确认二进制同时写 stdout(fd1) 和日志文件
- */
-#define LOG_PATH "/data/opbatt/battchg.log"
-
-static void log_write(const char *msg)
-{
-    printf("%s", msg);
-    fflush(stdout);
-
-    int fd = open(LOG_PATH, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
-    if (fd >= 0) {
-        write(fd, msg, strlen(msg));
-        close(fd);
-    }
-}
 
 int charging_parse_bcc_parms(const char *str, BccParms *parms)
 {
@@ -93,7 +65,7 @@ int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters)
     return 0;
 }
 
-static void read_voters_3x(char *buf, int bufsz, UfcsVoters *voters)
+void read_voters_3x(char *buf, int bufsz, UfcsVoters *voters)
 {
     for (int i = 0; i < 3; i++) {
         if (sysfs_read_ufcs_voters(buf, bufsz) > 0)
@@ -124,18 +96,13 @@ static void run_dumpsys(const char *a1, const char *a2, const char *a3)
     waitpid(pid, &status, 0);
 }
 
-/*
- * 充电重置序列
- * strace 确认 (2026-04-28 完整充电周期验证):
- * 仅执行 dumpsys battery reset, 不含 mmi_charging_enable 写入
- */
 void charging_dumpsys_reset(SysfsFds *fds)
 {
     (void)fds;
     run_dumpsys("reset", NULL, NULL);
 }
 
-static int choose_protocol(const BattConfig *cfg, const BccParms *parms)
+int choose_protocol(const BattConfig *cfg, const BccParms *parms)
 {
     if (cfg->cable_override)
         return (cfg->cable_override > 0) ? 1 : 0;
@@ -149,7 +116,7 @@ static int choose_protocol(const BattConfig *cfg, const BccParms *parms)
     return 1;
 }
 
-static int get_temp_curr_offset(const BattConfig *cfg, int temp_01c)
+int get_temp_curr_offset(const BattConfig *cfg, int temp_01c)
 {
     int temp = temp_01c / 10;
     for (int i = cfg->temp_range_count - 1; i >= 0; i--) {
@@ -162,7 +129,7 @@ static int get_temp_curr_offset(const BattConfig *cfg, int temp_01c)
     return 0;
 }
 
-static void write_current(SysfsFds *fds, int use_ufcs, int ma)
+void write_current(SysfsFds *fds, int use_ufcs, int ma)
 {
     if (use_ufcs) {
         sysfs_write_int(fds->ufcs_force_val, ma);
@@ -173,8 +140,7 @@ static void write_current(SysfsFds *fds, int use_ufcs, int ma)
     }
 }
 
-/* 限制最大电流: 取 cfg/proto/cable 中最小的有效值 */
-static int clamp_max_ma(int cfg_max, int proto_max, int cable_max)
+int clamp_max_ma(int cfg_max, int proto_max, int cable_max)
 {
     int m = cfg_max;
     if (proto_max > 0 && proto_max < m) m = proto_max;
@@ -182,10 +148,7 @@ static int clamp_max_ma(int cfg_max, int proto_max, int cable_max)
     return m;
 }
 
-/*
- * 阶段名称字符串
- */
-static const char *phase_name(ChargePhase ph)
+const char *phase_name(ChargePhase ph)
 {
     switch (ph) {
     case PHASE_IDLE:         return "IDLE";
@@ -199,20 +162,8 @@ static const char *phase_name(ChargePhase ph)
     return "?";
 }
 
-/*
- * 充电阶段状态机转换
- *
- * RISE → CV:            vbat >= cv_vol_mv
- * RESTART_RISE → CV:    vbat >= cv_vol_mv
- * CV   → TC:            soc >= tc_thr_soc || vbat >= tc_vol_thr_mv
- * TC   → DEPOL:         current_ma 很低 (接近 0)
- * TC   → FULL:          |ibat| <= tc_full_ma && vbat >= tc_vol_full_mv
- * DEPOL → RESTART_RISE: 去极化完成
- * FULL → IDLE:          等待 dumpsys reset 后由外层切到 RESTART_RISE
- * ANY  → IDLE:          charge_status == 0
- */
-static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
-                               const BccParms *parms, int soc, int current_ma)
+ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
+                       const BccParms *parms, int soc, int current_ma)
 {
     int vbat = parms->vbat_mv;
     int ibat = parms->ibat_ma < 0 ? -parms->ibat_ma : parms->ibat_ma;
@@ -257,373 +208,4 @@ static ChargePhase next_phase(ChargePhase cur, const BattConfig *cfg,
     }
 
     return cur;
-}
-
-void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
-{
-    char log_buf[1024];
-    char ts[32];
-    char line[256];
-    UfcsVoters voters;
-    BccParms parms;
-
-    int current_ma = 500;
-    int max_ma = cfg->ufcs_max;
-    int cable_max = 0;
-    int use_ufcs = 1;
-    int inc_step = cfg->inc_step;
-    int ramp_idx = 0;
-    int restart_count = 0;
-    int in_charge_cycle = 0;
-    int soc = 0;
-    ChargePhase phase = PHASE_IDLE;
-    int cv_step_idx = 0;
-    int cv_holding = 0;
-
-    /* ---- 阶段 1: 读取电池状态日志 ---- */
-    sysfs_read_battery_log(log_buf, sizeof(log_buf));
-
-    /* ---- 阶段 2: 重置 votable ---- */
-    sysfs_reset_votables(fds);
-
-    read_voters_3x(log_buf, sizeof(log_buf), &voters);
-
-    cable_max = voters.cable_max_ma;
-    max_ma = clamp_max_ma(max_ma, 0, cable_max);
-
-    /* strace 确认: inc_step = effective_max / 10 */
-    inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
-
-    /* ---- 阶段 4: 输出充电信息日志 ---- */
-    get_timestamp(ts, sizeof(ts));
-    snprintf(line, sizeof(line),
-             "%s UFCS_CHG: AdpMAXma=%dma, CableMAXma=%dma, Maxallow=%dma, Maxset=%dma, OP_chg=1\n",
-             ts, voters.max_ma, voters.cable_max_ma, voters.max_ma, max_ma);
-    log_write(line);
-    snprintf(line, sizeof(line),
-             "%s ==== Charger type UFCS, set max current %dma ====\n", ts, max_ma);
-    log_write(line);
-
-    /* ---- 阶段 5: 充电控制主循环 ---- */
-    while (*running) {
-        /* 读取 bcc_parms */
-        if (sysfs_read_bcc_parms(log_buf, sizeof(log_buf)) > 0) {
-            charging_parse_bcc_parms(log_buf, &parms);
-        } else {
-            /* 读取失败, 跳过本轮避免使用过时数据 */
-            usleep(500000);
-            continue;
-        }
-
-        /* 读取 SoC */
-        soc = sysfs_read_int(fds->chip_soc);
-
-        /* 读取电池温度 (strace 确认用 bcc_parms field[7] 即 temp_01c) */
-        sysfs_read_int(fds->battery_temp);
-
-        /*
-         * 充电周期结束检测:
-         * strace 确认 (2026-04-28 完整周期): thermal_hi 降到极低值 (<=20)
-         * 而非归零。SoC=100% 时 thermal_hi=0。
-         * 触发条件: thermal_hi 从非零降到 <=20 且已进入充电周期
-         */
-        if (parms.thermal_hi > 0)
-            in_charge_cycle = 1;
-
-        if (parms.thermal_hi <= 20 && in_charge_cycle && current_ma <= 100) {
-            /* 重置所有 votable */
-            sysfs_reset_votables(fds);
-
-            /* dumpsys 电池控制序列 + mmi_charging_enable 0→1 */
-            charging_dumpsys_reset(fds);
-
-            /* 重置计数限制: 超过 max_ufcs_chg_reset_cc 后等待 ufcs_reset_delay */
-            restart_count++;
-            if (cfg->max_ufcs_chg_reset_cc > 0 &&
-                restart_count > cfg->max_ufcs_chg_reset_cc) {
-                get_timestamp(ts, sizeof(ts));
-                snprintf(line, sizeof(line),
-                         "%s ==== Reset limit reached (%d/%d), delay %ds ====\n",
-                         ts, restart_count, cfg->max_ufcs_chg_reset_cc,
-                         cfg->ufcs_reset_delay > 0 ? cfg->ufcs_reset_delay : 10);
-                log_write(line);
-                /* 超限后延迟等待, 防止频繁重置 */
-                int delay = cfg->ufcs_reset_delay > 0 ? cfg->ufcs_reset_delay : 10;
-                int delay_ms = cfg->loop_interval_ms > 0 ? cfg->loop_interval_ms : 450;
-                for (int i = 0; i < delay * (1000 / delay_ms) && *running; i++)
-                    usleep((unsigned int)delay_ms * 1000);
-                restart_count = 0;
-            }
-
-            /* 根据 bcc_parms 决定下一周期的协议 */
-            use_ufcs = choose_protocol(cfg, &parms);
-
-            /* 重新读取 voter 信息确定新的最大电流和步长 */
-            read_voters_3x(log_buf, sizeof(log_buf), &voters);
-
-            cable_max = voters.cable_max_ma;
-            max_ma = clamp_max_ma(use_ufcs ? cfg->ufcs_max : cfg->pps_max,
-                                  use_ufcs ? parms.ufcs_max_ma : parms.pps_max_ma,
-                                  cable_max);
-
-            /* strace 确认: inc_step = effective_max / 10 (非 step_ma / 10) */
-            inc_step = max_ma > 0 ? max_ma / 10 : cfg->inc_step;
-
-            get_timestamp(ts, sizeof(ts));
-            snprintf(line, sizeof(line),
-                     "%s ==== Charger type %s, set max current %dma (restart #%d) ====\n",
-                     ts, use_ufcs ? "UFCS" : "PPS", max_ma, restart_count);
-            log_write(line);
-
-            current_ma = 500;
-            ramp_idx = 0;
-            cv_step_idx = 0;
-            cv_holding = 0;
-            in_charge_cycle = 0;
-            phase = PHASE_RESTART_RISE;
-            continue;
-        }
-
-        /* 温控: 根据温度调整最大电流 (strace 确认 temp_01c = battery_temp) */
-        int temp_offset = get_temp_curr_offset(cfg, parms.temp_01c);
-        int effective_max = max_ma;
-        if (temp_offset > 0 && effective_max > temp_offset)
-            effective_max = temp_offset;
-
-        /* thermal_hi 限流: strace 确认 thermal_hi 阶梯 91→85→80 限制电流上限 */
-        if (parms.thermal_hi > 0) {
-            int thermal_cap = parms.thermal_hi * 100;
-            if (thermal_cap > 0 && thermal_cap < effective_max)
-                effective_max = thermal_cap;
-        }
-
-        /* STEP_VOTER 限流: strace 确认 STEP_VOTER 从 9100 变为 8000 */
-        if (voters.step_ma > 0 && voters.step_ma < effective_max)
-            effective_max = voters.step_ma;
-
-        /* ---- 充电阶段状态机 ---- */
-        ChargePhase new_phase = next_phase(phase, cfg, &parms, soc, current_ma);
-
-        if (new_phase != phase) {
-            get_timestamp(ts, sizeof(ts));
-            snprintf(line, sizeof(line),
-                     "%s ==== Phase %s -> %s (vbat=%dmV, soc=%d%%) ====\n",
-                     ts, phase_name(phase), phase_name(new_phase),
-                     parms.vbat_mv, soc);
-            log_write(line);
-            phase = new_phase;
-        }
-
-        switch (phase) {
-        case PHASE_IDLE:
-            /* 未充电, 不做操作 */
-            break;
-
-        case PHASE_RISE:
-        case PHASE_RESTART_RISE: {
-            int phase_max = effective_max;
-
-            if (phase == PHASE_RESTART_RISE) {
-                /* 重启 RISE: +50mA 线性爬升, 无 quickstart
-                 * strace 确认 (2026-04-28 完整周期):
-                 * 550→600→650→...→3500, 每步 +50mA, ~480ms 间隔
-                 */
-                int step = cfg->restart_rise_step > 0 ? cfg->restart_rise_step : 50;
-                if (current_ma < phase_max) {
-                    current_ma += step;
-                    if (current_ma > phase_max)
-                        current_ma = phase_max;
-                    write_current(fds, use_ufcs, current_ma);
-                }
-                break;
-            }
-
-            /* 以下为首次充电的 quickstart 三段式 RISE */
-
-            if (current_ma == 500 && ramp_idx == 0) {
-                /* Quickstart: 写 500 后立即写高值
-                 * vbat >= rise_quickstep_thr: 直接跳到 cable_max-750
-                 * vbat < rise_quickstep_thr:  渐进 500 + cable_max*13/80
-                 */
-                write_current(fds, use_ufcs, 500);
-                if (cfg->rise_quickstep_thr_mv > 0 &&
-                    parms.vbat_mv >= cfg->rise_quickstep_thr_mv) {
-                    /* 高电压 quickstep: 一步逼近 cable_max */
-                    int margin = (cable_max * 3) / 32;
-                    margin = ((margin + 25) / 50) * 50;
-                    current_ma = cable_max - margin;
-                    ramp_idx = 99;  /* 跳过 ramp, 直接全速步进 */
-                } else {
-                    /* 低电压 quickstart: 渐进升流 */
-                    int qs_step = (cable_max * 13) / 80;
-                    qs_step = ((qs_step + 25) / 50) * 50;
-                    current_ma = 500 + qs_step;
-                    ramp_idx = 1;
-                }
-                write_current(fds, use_ufcs, current_ma);
-                break;
-            }
-
-            if (current_ma >= phase_max) {
-                /* 到达 cap, 维持但不重复写入 */
-                break;
-            }
-
-            int step;
-            if (ramp_idx >= 1 && ramp_idx <= 4) {
-                /* 斜坡阶段: 剩余距离除法 */
-                int remaining = cable_max - current_ma;
-                int divisor = (ramp_idx == 1) ? 17 : 11;
-                step = (remaining + divisor / 2) / divisor;
-                step = ((step + 25) / 50) * 50;
-                if (step > inc_step) step = inc_step;
-            } else if (cfg->adjust_step > 0 && ramp_idx >= 5 && ramp_idx <= 6) {
-                /* 微调过渡: adjust_step (strace 确认 2 步) */
-                step = cfg->adjust_step;
-            } else {
-                /* 全速步进: cable_max / 10 */
-                step = cable_max > 0 ? cable_max / 10 : inc_step;
-            }
-
-            current_ma += step;
-            if (current_ma > phase_max)
-                current_ma = phase_max;
-
-            write_current(fds, use_ufcs, current_ma);
-            ramp_idx++;
-            break;
-        }
-
-        case PHASE_CV: {
-            /*
-             * CV 阶梯降流 (strace 确认):
-             * vbat 达到阈值时阶梯式大幅降流, 非线性递减。
-             * 降流后维持不写入 force_val, 直到下个阈值触发。
-             * 阶梯全部走完后进入 cv_holding 静默模式。
-             */
-            if (cv_holding) {
-                /* 阶梯已走完, 静默维持。
-                 * strace 确认 (2026-04-28): CV 阶段有振荡回升
-                 * (3000↔2950↔3000), vbat 回落时可回到较低阶梯。
-                 */
-                for (int i = 0; i < cv_step_idx; i++) {
-                    if (parms.vbat_mv < cfg->cv_step_mv[i]) {
-                        current_ma = (i > 0) ? cfg->cv_step_ma[i - 1] : current_ma;
-                        cv_step_idx = i;
-                        cv_holding = 0;
-                        write_current(fds, use_ufcs, current_ma);
-                        break;
-                    }
-                }
-                break;
-            }
-
-            int dropped = 0;
-            for (int i = cv_step_idx; i < cfg->cv_step_count; i++) {
-                if (parms.vbat_mv >= cfg->cv_step_mv[i]) {
-                    current_ma = cfg->cv_step_ma[i];
-                    cv_step_idx = i + 1;
-                    dropped = 1;
-                }
-            }
-
-            if (dropped) {
-                write_current(fds, use_ufcs, current_ma);
-                get_timestamp(ts, sizeof(ts));
-                snprintf(line, sizeof(line),
-                         "%s ==== CV step-down to %dmA (vbat=%dmV, step=%d) ====\n",
-                         ts, current_ma, parms.vbat_mv, cv_step_idx);
-                log_write(line);
-            }
-
-            /* 所有阶梯走完, 进入静默维持 */
-            if (cfg->cv_step_count > 0 && cv_step_idx >= cfg->cv_step_count) {
-                cv_holding = 1;
-                get_timestamp(ts, sizeof(ts));
-                snprintf(line, sizeof(line),
-                         "%s ==== CV holding at %dmA (vbat=%dmV) ====\n",
-                         ts, current_ma, parms.vbat_mv);
-                log_write(line);
-            }
-
-            /* 无阶梯配置时, 兜底用 dec_step 线性递减 */
-            if (cfg->cv_step_count == 0) {
-                int cap = cfg->cv_max_ma > 0 ? cfg->cv_max_ma : effective_max;
-                if (cap > effective_max) cap = effective_max;
-                if (current_ma > cap) {
-                    int step = cfg->dec_step > 0 ? cfg->dec_step : 100;
-                    current_ma -= step;
-                    if (current_ma < cap) current_ma = cap;
-                    write_current(fds, use_ufcs, current_ma);
-                }
-            }
-            break;
-        }
-
-        case PHASE_TC: {
-            /* TC: 涓流阶段, 限流递减 */
-            int cap = cfg->tc_full_ma > 0 ? cfg->tc_full_ma : 500;
-            if (cap > effective_max) cap = effective_max;
-            if (current_ma > cap) {
-                int step = cfg->dec_step > 0 ? cfg->dec_step : 100;
-                current_ma -= step;
-                if (current_ma < cap) current_ma = cap;
-                write_current(fds, use_ufcs, current_ma);
-            }
-            break;
-        }
-
-        case PHASE_DEPOL: {
-            /* 去极化阶段 (strace 2026-04-28 完整周期确认):
-             * force_val 写极低值和 0, 让内核驱动执行去极化。
-             * 观测序列: 50→500→300→250→50→0, 可多轮。
-             */
-            int pulse = cfg->depol_pulse_ma > 0 ? cfg->depol_pulse_ma : 500;
-
-            /* 写脉冲电流 */
-            write_current(fds, use_ufcs, pulse);
-            usleep(500000);
-
-            /* 逐步降到 0 */
-            for (int v = 200; v >= 0; v -= 50) {
-                if (!*running) break;
-                write_current(fds, use_ufcs, v > 0 ? v : 0);
-                usleep(500000);
-            }
-
-            /* 写 0 */
-            write_current(fds, use_ufcs, 0);
-
-            get_timestamp(ts, sizeof(ts));
-            snprintf(line, sizeof(line),
-                     "%s ==== DEPOL complete, preparing restart ====\n", ts);
-            log_write(line);
-
-            /* 去极化完成, 重置状态准备重启 */
-            current_ma = 500;
-            ramp_idx = 0;
-            cv_step_idx = 0;
-            cv_holding = 0;
-            break;
-        }
-
-        case PHASE_FULL:
-            /* 满电: 持续写入最小维持电流 */
-            write_current(fds, use_ufcs, 500);
-            break;
-        }
-
-        /* 满电判断: batt_full_thr_mv 额外检查 */
-        if (phase != PHASE_FULL && cfg->batt_full_thr_mv > 0 &&
-            parms.vbat_mv >= cfg->batt_full_thr_mv) {
-            get_timestamp(ts, sizeof(ts));
-            snprintf(line, sizeof(line),
-                     "%s ==== Battery full: vbat=%dmV >= batt_full_thr_mv=%dmV ====\n",
-                     ts, parms.vbat_mv, cfg->batt_full_thr_mv);
-            log_write(line);
-            phase = PHASE_FULL;
-        }
-
-        usleep(500000);
-    }
 }
