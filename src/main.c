@@ -1,5 +1,5 @@
 /*
- * payload.elf.no_license (v7.3.2) 还原实现
+ * opbatt_control (v7.3.2) 还原实现
  *
  * 架构: 3 线程模型 (pthread_create)
  *   Thread 1: USB 在线监控 (每 2s)

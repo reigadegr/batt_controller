@@ -1,4 +1,4 @@
-# payload.elf.no_license 逆向分析报告
+# opbatt_control 逆向分析报告
 
 > 目标: 开源重写 opbatt_control 充电控制核心
 > 更新: 2026-04-28 (完整充电周期 strace + 完整行为对齐)
@@ -8,9 +8,10 @@
 
 ## 一、基本信息
 
-ELF 64-bit ARM aarch64, stripped, NDK r26d, 动态链接 + 静态 OpenSSL。
-XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/logdw，无 TCP。
-深度逆向文档: `tmp/DEEP_REVERSE_ANALYSIS.md`
+ELF 64-bit ARM aarch64, PIE, stripped, NDK r26d, 动态链接 + 静态 OpenSSL (~1.4MB .text)。
+**字符串未加密**: .rodata 全部明文（sysfs 路径、配置键名等均可直接 `strings` 提取）。
+高熵区域 (entropy=7.14) 来自 OpenSSL 内置字符串表，非 XOR 混淆。
+网络仅 AF_UNIX → /dev/socket/logdw，无 TCP。
 
 ---
 
@@ -263,7 +264,25 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | `0xd5d08` | `sub w8, w8, #0x190` (减 400) | 可能是 CV 降流逻辑 |
 | `0xd5c94` | `MOV #500` + `blr x8` | DEPOL 脉冲初始值 (非 FULL) |
 
-config 值硬编码在二进制中，字符串全部 XOR 混淆。
+config 值硬编码在二进制中，字符串均为明文（非 XOR 混淆）。
+
+### .rodata 静态分析结论 (2026-04-28)
+
+| 属性 | 值 |
+|------|-----|
+| .rodata 偏移 | 0x3D9E0，大小 0x41EFC (270KB) |
+| 熵值 | 7.14 bits/byte |
+| 高熵来源 | OpenSSL 静态库字符串 (GOST/EC 曲线名、CMS/ASN.1 错误信息等) |
+| 应用字符串 | 全部明文，如 `/sys/class/power_supply/battery/temp`、`/proc/oplus-votable/PPS_CURR/force_val` 等 |
+| 加密 | **无**，无自解密函数，pmt.md 描述的 XOR 方案不适用 |
+
+| 属性 | 值 |
+|------|-----|
+| .preinit_array | 空 (0xffffffffffffffff) |
+| .init_array[0] | 0x2125e0 — getauxval + __system_property_get (CPU 特性检测) |
+| .init_array[1] | 0x212ab0 — 同上 + NEON crypto 指令检测 |
+| .init_array[2] | 0xf794c — sigfillset/sigaction/sigsetjmp + 读 CNTVCT_EL0 计时器 |
+| mprotect 调用 | 0x1aa2f4/0x1aa320 — mmap 内存分配器，非 .rodata 自解密 |
 
 ### 二次分析补充 (2026-04-28)
 

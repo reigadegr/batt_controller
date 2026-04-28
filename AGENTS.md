@@ -1,6 +1,6 @@
 ## 项目说明
 
-本项目为逆向项目，目标源文件为tmp/payload.elf.no_license
+本项目为逆向项目，目标源文件为tmp/opbatt_control
 
 当前为c语言实现，后续会迁移到Rust
 
@@ -12,10 +12,10 @@
 
 ### strace 抓取 syscall
 
-strace 可绕过 XOR 字符串混淆，直接暴露二进制的真实行为（打开的文件路径、网络连接、进程创建等）。
+strace 可直接暴露二进制的真实行为（打开的文件路径、网络连接、进程创建等）。
 
 ```bash
-su -c /data/data/com.termux/files/usr/bin/strace tmp/payload.elf.no_license
+su -c /data/data/com.termux/files/usr/bin/strace tmp/opbatt_control
 ```
 
 需要 root 权限（`su -c`），因为目标程序操作 /sys、/proc 等节点需要特权。
