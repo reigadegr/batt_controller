@@ -80,4 +80,10 @@ void charging_dumpsys_reset(SysfsFds *fds);
  */
 void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running);
 
+/* 获取默认 CV 降流阶梯配置 (基于锂电池物理特性)
+ * effective_max: 当前有效最大电流 (mA), 用于计算 50% 比例档
+ * out_mv/out_ma: 输出数组, 容量至少 CV_STEP_MAX
+ * 返回阶梯数 */
+int get_default_cv_steps(int effective_max, int *out_mv, int *out_ma);
+
 #endif /* CHARGING_H */

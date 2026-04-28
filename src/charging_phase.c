@@ -76,6 +76,21 @@ void calc_effective_max(LoopCtx *c)
     if (temp_offset > 0 && c->effective_max > temp_offset)
         c->effective_max = temp_offset;
 
+    /* 默认温控保护: temp_range 未配置时生效
+     * temp_01c 单位 0.1°C, 300 = 30°C
+     * >45°C 暂停, >40°C 降50%, <10°C 暂停, <15°C 降50%
+     */
+    if (c->cfg->temp_range_count == 0) {
+        int t = c->parms.temp_01c;
+        if (t > 450 || t < 100) {
+            c->effective_max = 0;
+        } else if (t > 400 || t < 150) {
+            int halved = c->effective_max / 2;
+            if (halved < c->effective_max)
+                c->effective_max = halved;
+        }
+    }
+
     /* thermal_hi 限流: strace 确认 thermal_hi 阶梯 91→85→80 限制电流上限 */
     if (c->parms.thermal_hi > 0) {
         int thermal_cap = c->parms.thermal_hi * 100;
@@ -168,10 +183,39 @@ void exec_rise(LoopCtx *c)
     c->ramp_idx++;
 }
 
+/* 默认 CV 降流阶梯: 基于锂电池恒压充电物理特性
+ * 阶梯阈值来自 vbat 电压触发, 非 SoC/电流判定 */
+int get_default_cv_steps(int effective_max, int *out_mv, int *out_ma)
+{
+    int half = (effective_max + 1) / 2;
+    half = ((half + 25) / 50) * 50;  /* 对齐 50mA */
+
+    out_mv[0] = 4450; out_ma[0] = half;
+    out_mv[1] = 4480; out_ma[1] = 1000;
+    out_mv[2] = 4500; out_ma[2] = 500;
+    out_mv[3] = 4520; out_ma[3] = 200;
+    return 4;
+}
+
 /* CV 恒压阶段: 阶梯降流 */
 void exec_cv(LoopCtx *c)
 {
     char ts[32], line[256];
+
+    /* 确定 CV 阶梯表: 有配置用配置, 无配置用内置默认 */
+    const int *step_mv, *step_ma;
+    int step_count;
+    int def_mv[CV_STEP_MAX], def_ma[CV_STEP_MAX];
+
+    if (c->cfg->cv_step_count > 0) {
+        step_mv = c->cfg->cv_step_mv;
+        step_ma = c->cfg->cv_step_ma;
+        step_count = c->cfg->cv_step_count;
+    } else {
+        step_count = get_default_cv_steps(c->effective_max, def_mv, def_ma);
+        step_mv = def_mv;
+        step_ma = def_ma;
+    }
 
     if (c->cv_holding) {
         /* 阶梯已走完, 静默维持。
@@ -179,8 +223,8 @@ void exec_cv(LoopCtx *c)
          * (3000↔2950↔3000), vbat 回落时可回到较低阶梯。
          */
         for (int i = 0; i < c->cv_step_idx; i++) {
-            if (c->parms.vbat_mv < c->cfg->cv_step_mv[i]) {
-                c->current_ma = (i > 0) ? c->cfg->cv_step_ma[i - 1] : c->current_ma;
+            if (c->parms.vbat_mv < step_mv[i]) {
+                c->current_ma = (i > 0) ? step_ma[i - 1] : c->current_ma;
                 c->cv_step_idx = i;
                 c->cv_holding = 0;
                 write_current(c->fds, c->use_ufcs, c->current_ma);
@@ -191,9 +235,9 @@ void exec_cv(LoopCtx *c)
     }
 
     int dropped = 0;
-    for (int i = c->cv_step_idx; i < c->cfg->cv_step_count; i++) {
-        if (c->parms.vbat_mv >= c->cfg->cv_step_mv[i]) {
-            c->current_ma = c->cfg->cv_step_ma[i];
+    for (int i = c->cv_step_idx; i < step_count; i++) {
+        if (c->parms.vbat_mv >= step_mv[i]) {
+            c->current_ma = step_ma[i];
             c->cv_step_idx = i + 1;
             dropped = 1;
         }
@@ -209,25 +253,13 @@ void exec_cv(LoopCtx *c)
     }
 
     /* 所有阶梯走完, 进入静默维持 */
-    if (c->cfg->cv_step_count > 0 && c->cv_step_idx >= c->cfg->cv_step_count) {
+    if (step_count > 0 && c->cv_step_idx >= step_count) {
         c->cv_holding = 1;
         get_timestamp(ts, sizeof(ts));
         snprintf(line, sizeof(line),
                  "%s ==== CV holding at %dmA (vbat=%dmV) ====\n",
                  ts, c->current_ma, c->parms.vbat_mv);
         log_write(line);
-    }
-
-    /* 无阶梯配置时, 兜底用 dec_step 线性递减 */
-    if (c->cfg->cv_step_count == 0) {
-        int cap = c->cfg->cv_max_ma > 0 ? c->cfg->cv_max_ma : c->effective_max;
-        if (cap > c->effective_max) cap = c->effective_max;
-        if (c->current_ma > cap) {
-            int step = c->cfg->dec_step > 0 ? c->cfg->dec_step : 100;
-            c->current_ma -= step;
-            if (c->current_ma < cap) c->current_ma = cap;
-            write_current(c->fds, c->use_ufcs, c->current_ma);
-        }
     }
 }
 

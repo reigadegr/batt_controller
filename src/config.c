@@ -142,6 +142,16 @@ int config_parse(const char *path, BattConfig *cfg)
     }
 
     fclose(fp);
+
+    /* 补全未在配置文件中指定的字段默认值 */
+    if (cfg->cv_vol_mv == 0)          cfg->cv_vol_mv       = 4450;
+    if (cfg->cv_max_ma == 0)          cfg->cv_max_ma       = 1000;
+    if (cfg->tc_vol_thr_mv == 0)      cfg->tc_vol_thr_mv   = 4500;
+    if (cfg->tc_thr_soc == 0)         cfg->tc_thr_soc      = 99;
+    if (cfg->tc_full_ma == 0)         cfg->tc_full_ma      = 200;
+    if (cfg->tc_vol_full_mv == 0)     cfg->tc_vol_full_mv  = 4530;
+    if (cfg->batt_full_thr_mv == 0)   cfg->batt_full_thr_mv = 4530;
+
     return 0;
 }
 
