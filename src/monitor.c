@@ -33,13 +33,22 @@ void *monitor_usb_thread(void *arg)
         int online = sysfs_read_int(st->fds.usb_online);
 
         if (online > 0 && !st->usb_online) {
-            /* USB 刚插入 → 触发充电初始化 */
+            /* USB 刚插入 → 关闭旧 fd + 重新打开 + 重置 votable
+             * 与原始二进制一致: fd 生命周期跟随 USB 插拔 */
+            sysfs_close_all(&st->fds);
+            if (sysfs_open_all(&st->fds) < 0) {
+                fprintf(stderr, "sysfs_open_all failed on USB re-plug\n");
+                sleep(2);
+                continue;
+            }
+            sysfs_reset_votables(&st->fds);
             st->usb_online = 1;
             st->charging_active = 1;
         } else if (online <= 0 && st->usb_online) {
-            /* USB 拔出 → 停止充电 */
+            /* USB 拔出 → 关闭所有 sysfs fd */
             st->usb_online = 0;
             st->charging_active = 0;
+            sysfs_close_all(&st->fds);
         }
 
         sleep(2);

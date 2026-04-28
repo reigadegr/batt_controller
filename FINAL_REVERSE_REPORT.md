@@ -50,6 +50,7 @@ XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/
 | **RISE adjust_step 微调过渡 (ramp_idx=5~6, 50mA×2)** | ✅ 2026-04-28 strace 确认实现 |
 | **get_temp_curr_offset 修复 (>= 高温阈值, 从高到低遍历)** | ✅ 2026-04-28 bug 修复 |
 | **mmi_charging toggle 后直接重入 RISE** | ✅ 2026-04-28 用户要求实现 |
+| **USB 拔出后 fd 生命周期管理** | ✅ 2026-04-28 strace 确认实现 |
 
 ---
 
@@ -216,9 +217,9 @@ strace 中 force_val 出现负值序列。发生在 CV 衰减末尾和 TC 保持
 
 strace 观测到 3450→3500 (+50mA) 回升，代码 CV 阶段只减不增。
 
-### 7.3 独立 USB 检测线程生命周期管理 ⚠️
+### 7.3 独立 USB 检测线程生命周期管理 ✅
 
-二进制 PID 9185 在 USB 拔出后关闭所有 fd，重新插入时重新打开。代码中 sysfs_open_all 只调用一次。
+USB 拔出后 close all fd，重新插入后 open_all + reset_votables，与原始二进制 PID 9185 strace 行为一致。
 
 ### 7.4 batt_full_thr_mv 验证 ❓
 
