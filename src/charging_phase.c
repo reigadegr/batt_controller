@@ -246,13 +246,15 @@ void exec_depol(LoopCtx *c)
     char ts[32], line[256];
 
     /* 去极化阶段 (strace 2026-04-28 完整周期确认):
-     * 完整序列: 50→-100→500→300→250→50→0→-50→-200→-350→500→300→250→50
+     * 完整序列: 50→-100→500→300→250→50→0→-50→-200→-350→500→300→250→50→1000
      * 两轮脉冲+负值去极化。force_val 确实写入负值。
      */
     int pulse = c->cfg->depol_pulse_ma > 0 ? c->cfg->depol_pulse_ma : 500;
     int neg_step = c->cfg->depol_neg_step > 0 ? c->cfg->depol_neg_step : 150;
 
-    /* Round 1: 初始负值 + 脉冲下降至 0 */
+    /* Round 1: 50 → 初始负值 → 脉冲下降至 0 */
+    write_current(c->fds, c->use_ufcs, 50);
+    usleep(500000);
     write_current(c->fds, c->use_ufcs, -(neg_step * 2 / 3));
     usleep(500000);
 
@@ -285,12 +287,16 @@ void exec_depol(LoopCtx *c)
     write_current(c->fds, c->use_ufcs, 50);
     usleep(500000);
 
+    /* strace 确认: DEPOL 结束后写 1000 进入 FULL */
+    write_current(c->fds, c->use_ufcs, 1000);
+    usleep(500000);
+
     get_timestamp(ts, sizeof(ts));
     snprintf(line, sizeof(line),
              "%s ==== DEPOL complete, preparing restart ====\n", ts);
     log_write(line);
 
-    c->current_ma = 500;
+    c->current_ma = 1000;
     c->ramp_idx = 0;
     c->cv_step_idx = 0;
     c->cv_holding = 0;
