@@ -130,6 +130,9 @@ void exec_rise(LoopCtx *c)
             c->current_ma = 500 + qs_step;
             c->ramp_idx = 1;
         }
+        /* quickstart 目标不能超过 phase_max，否则后续 ramp 逻辑会跳过 */
+        if (c->current_ma > phase_max)
+            c->current_ma = phase_max;
         write_current(c->fds, c->use_ufcs, c->current_ma);
         return;
     }
