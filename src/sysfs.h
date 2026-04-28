@@ -34,6 +34,9 @@ typedef struct {
     int ufcs_force_active;       /* fd 13 (W) */
 } SysfsFds;
 
+/* 临时打开一个 sysfs 节点 (只读)，返回 fd，失败返回 -1 */
+int sysfs_open_ro(const char *path);
+
 /* 打开所有 sysfs/proc 节点，返回 0 成功，-1 失败 */
 int sysfs_open_all(SysfsFds *fds);
 

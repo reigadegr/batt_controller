@@ -20,6 +20,7 @@
 #include "config.h"
 #include "charging.h"
 #include "monitor.h"
+#include "sysfs.h"
 
 #define CONFIG_PATH "/data/opbatt/batt_control"
 
@@ -38,9 +39,21 @@ static void *charging_thread_wrapper(void *arg)
         }
         if (!st->running) break;
 
+        /* USB 插入 → 打开 sysfs fd (充电线程自己管理生命周期) */
+        SysfsFds fds;
+        if (sysfs_open_all(&fds) < 0) {
+            fprintf(stderr, "sysfs_open_all failed\n");
+            /* 不清除 charging_active，保持重试能力 */
+            sleep(2);
+            continue;
+        }
+        sysfs_reset_votables(&fds);
+
         /* 进入充电控制主循环 */
-        charging_loop(&st->fds, &st->config, &st->charging_active);
-        /* USB 拔出后 charging_active=0, 回到外层等待 */
+        charging_loop(&fds, &st->config, &st->charging_active);
+
+        /* USB 拔出后 charging_active=0, 关闭 fd 回到外层等待 */
+        sysfs_close_all(&fds);
     }
 
     return NULL;
@@ -49,8 +62,6 @@ static void *charging_thread_wrapper(void *arg)
 static void sighandler(int sig)
 {
     (void)sig;
-    g_state.running = 0;
-    g_state.charging_active = 0;
     /* 与原始二进制一致: 收到信号后直接退出，避免 SIGTERM 反复投递 */
     _exit(0);
 }
@@ -98,12 +109,20 @@ int main(int argc, char **argv)
         perror("pthread_create usb_monitor");
         return 1;
     }
+
     if (pthread_create(&tid_charging, NULL, charging_thread_wrapper, &g_state) != 0) {
         perror("pthread_create charging");
+        g_state.running = 0;
+        pthread_join(tid_usb, NULL);
         return 1;
     }
+
     if (pthread_create(&tid_battery, NULL, monitor_battery_log_thread, &g_state) != 0) {
         perror("pthread_create battery_log");
+        g_state.running = 0;
+        g_state.charging_active = 0;
+        pthread_join(tid_charging, NULL);
+        pthread_join(tid_usb, NULL);
         return 1;
     }
 

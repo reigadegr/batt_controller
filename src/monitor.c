@@ -1,5 +1,7 @@
 #include "monitor.h"
 
+#include "sysfs.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,53 +10,35 @@
 /*
  * Thread 1: USB 在线监控
  *
- * strace 实测行为:
- *   1. 打开所有 sysfs/proc fd (usb/online, battery_temp, chip_soc,
- *      ufcs_status, adapter_power, bcc_current, mmi_charging_enable,
- *      pps_force_val, pps_force_active, ufcs_force_val, ufcs_force_active)
- *   2. 重置 votable: 写 "0" 到 PPS/UFCS force
- *   3. 循环: 每 2s 读 usb/online
+ * 只负责检测 usb/online 状态并设置标志。
+ * sysfs fd 生命周期由充电线程管理，避免竞态。
  */
 void *monitor_usb_thread(void *arg)
 {
     SharedState *st = (SharedState *)arg;
+    int prev_online = 0;
 
-    /* 打开所有 sysfs 节点 */
-    if (sysfs_open_all(&st->fds) < 0) {
-        fprintf(stderr, "sysfs_open_all failed\n");
-        return NULL;
-    }
-
-    /* 重置 votable */
-    sysfs_reset_votables(&st->fds);
-
-    /* 轮询 USB 在线状态 */
     while (st->running) {
-        int online = sysfs_read_int(st->fds.usb_online);
+        /* 临时打开 usb/online 读取状态 */
+        int fd = sysfs_open_ro("/sys/class/power_supply/usb/online");
+        int online = 0;
+        if (fd >= 0) {
+            online = sysfs_read_int(fd);
+            close(fd);
+        }
 
-        if (online > 0 && !st->usb_online) {
-            /* USB 刚插入 → 关闭旧 fd + 重新打开 + 重置 votable
-             * 与原始二进制一致: fd 生命周期跟随 USB 插拔 */
-            sysfs_close_all(&st->fds);
-            if (sysfs_open_all(&st->fds) < 0) {
-                fprintf(stderr, "sysfs_open_all failed on USB re-plug\n");
-                sleep(2);
-                continue;
-            }
-            sysfs_reset_votables(&st->fds);
+        if (online > 0 && !prev_online) {
             st->usb_online = 1;
             st->charging_active = 1;
-        } else if (online <= 0 && st->usb_online) {
-            /* USB 拔出 → 关闭所有 sysfs fd */
+        } else if (online <= 0 && prev_online) {
             st->usb_online = 0;
             st->charging_active = 0;
-            sysfs_close_all(&st->fds);
         }
+        prev_online = (online > 0) ? 1 : 0;
 
         sleep(2);
     }
 
-    sysfs_close_all(&st->fds);
     return NULL;
 }
 

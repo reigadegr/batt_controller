@@ -25,6 +25,11 @@ static int open_ro(const char *path)
     return open(path, O_RDONLY | O_CLOEXEC);
 }
 
+int sysfs_open_ro(const char *path)
+{
+    return open_ro(path);
+}
+
 static int open_wo(const char *path)
 {
     return open(path, O_WRONLY | O_CLOEXEC);
@@ -48,6 +53,9 @@ int sysfs_open_all(SysfsFds *fds)
     if (fds->usb_online < 0) return -1;
     return 0;
 }
+
+_Static_assert(sizeof(SysfsFds) == 10 * sizeof(int),
+               "SysfsFds must contain only int fields for close_all iteration");
 
 void sysfs_close_all(SysfsFds *fds)
 {

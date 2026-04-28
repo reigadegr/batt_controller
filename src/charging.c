@@ -309,6 +309,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
         /* 读取 bcc_parms */
         if (sysfs_read_bcc_parms(log_buf, sizeof(log_buf)) > 0) {
             charging_parse_bcc_parms(log_buf, &parms);
+        } else {
+            /* 读取失败, 跳过本轮避免使用过时数据 */
+            usleep(500000);
+            continue;
         }
 
         /* 读取 SoC */
@@ -333,8 +337,9 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             charging_dumpsys_reset(fds);
 
             /* 重置计数限制: 超过 max_ufcs_chg_reset_cc 后等待 ufcs_reset_delay */
+            restart_count++;
             if (cfg->max_ufcs_chg_reset_cc > 0 &&
-                restart_count >= cfg->max_ufcs_chg_reset_cc) {
+                restart_count > cfg->max_ufcs_chg_reset_cc) {
                 get_timestamp(ts, sizeof(ts));
                 snprintf(line, sizeof(line),
                          "%s ==== Reset limit reached (%d/%d), delay %ds ====\n",
@@ -366,7 +371,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             get_timestamp(ts, sizeof(ts));
             snprintf(line, sizeof(line),
                      "%s ==== Charger type %s, set max current %dma (restart #%d) ====\n",
-                     ts, use_ufcs ? "UFCS" : "PPS", max_ma, ++restart_count);
+                     ts, use_ufcs ? "UFCS" : "PPS", max_ma, restart_count);
             log_write(line);
 
             current_ma = 500;

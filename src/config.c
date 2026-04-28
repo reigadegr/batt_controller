@@ -28,7 +28,9 @@ static const char *extract_value(const char *line, const char *key)
 {
     size_t klen = strlen(key);
     if (strncmp(line, key, klen) != 0) return NULL;
-    if (line[klen] != '=') return NULL;
+    /* 精确键匹配: key 后必须紧跟 '=' 或行尾 */
+    if (line[klen] != '=' && line[klen] != '\0') return NULL;
+    if (line[klen] == '\0') return NULL;
     return line + klen + 1;
 }
 
