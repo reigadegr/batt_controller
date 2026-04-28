@@ -113,7 +113,8 @@ void exec_rise(LoopCtx *c)
     if (c->current_ma == 500 && c->ramp_idx == 0) {
         /* Quickstart: 写 500 后立即写高值
          * vbat >= rise_quickstep_thr: 直接跳到 cable_max-750
-         * vbat < rise_quickstep_thr:  渐进 500 + cable_max*13/80
+         * vbat < rise_quickstep_thr:  直接使用 ufcs_max_ma (bcc_parms[14])
+         * 系数验证: 8000 * 14 / 80 = 1400 = ufcs_max_ma
          */
         write_current(c->fds, c->use_ufcs, 500);
         if (c->cfg->rise_quickstep_thr_mv > 0 &&
@@ -124,10 +125,13 @@ void exec_rise(LoopCtx *c)
             c->current_ma = c->cable_max - margin;
             c->ramp_idx = 99;  /* 跳过 ramp, 直接全速步进 */
         } else {
-            /* 低电压 quickstart: 渐进升流 */
-            int qs_step = (c->cable_max * 13) / 80;
-            qs_step = ((qs_step + 25) / 50) * 50;
-            c->current_ma = 500 + qs_step;
+            /* 低电压 quickstart: 直接使用 ufcs_max_ma
+             * strace 确认: 500 → 1400 (ufcs_max_ma)，系数14
+             */
+            c->current_ma = c->parms.ufcs_max_ma > 0 ?
+                           c->parms.ufcs_max_ma :
+                           (c->cable_max * 14) / 80;
+            c->current_ma = ((c->current_ma + 25) / 50) * 50;
             c->ramp_idx = 1;
         }
         /* quickstart 目标不能超过 phase_max，否则后续 ramp 逻辑会跳过 */
