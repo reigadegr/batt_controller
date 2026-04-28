@@ -51,12 +51,30 @@ typedef struct {
     int cable_type;        /* fields[18]: 线缆类型 */
 } BccParms;
 
-/* UFCS voter 信息 */
+/* UFCS voter 信息 (22个voter) */
 typedef struct {
-    int max_ma;            /* MAX_VOTER 值 */
-    int cable_max_ma;      /* CABLE_MAX_VOTER 值 */
-    int step_ma;           /* STEP_VOTER 值 */
-    int bcc_ma;            /* BCC_VOTER 值 */
+    int max_ma;            /* MAX_VOTER: 硬件最大电流上限 */
+    int cable_max_ma;      /* CABLE_MAX_VOTER: 线缆最大电流 */
+    int step_ma;           /* STEP_VOTER: 阶梯式电流限制 */
+    int bcc_ma;            /* BCC_VOTER: BCC协议电流限制 */
+    int adapter_imax_ma;   /* ADAPTER_IMAX_VOTER: 适配器最大输出电流 */
+    int ic_ma;             /* IC_VOTER: 充电IC硬件限制 */
+    int base_max_ma;       /* BASE_MAX_VOTER: 基础最大电流 */
+    int batt_temp_ma;      /* BATT_TEMP_VOTER: 电池温度保护电流 */
+    int cool_down_ma;      /* COOL_DOWN_VOTER: 降温/降功率控制 */
+    int imp_ma;            /* IMP_VOTER: 阻抗/脉冲电流限制 */
+    int limit_fcl_ma;      /* LIMIT_FCL_VOTER: FCL(满充限制)限流 */
+    int batt_soc_ma;       /* BATT_SOC_VOTER: 电池SOC限制电流 */
+    int sale_mode_ma;      /* SALE_MODE_VOTER: 展台模式电流限制 */
+    int hidl_ma;           /* HIDL_VOTER: HIDL接口设置的电流 */
+    int bad_subboard_ma;   /* BAD_SUBBOARD_VOTER: 子板异常保护 */
+    int eis_ma;            /* EIS_VOTER: 电化学阻抗谱保护 */
+    int batt_bal_ma;       /* BATT_BAL_VOTER: 电池均衡电流限制 */
+    int ibus_over_ma;      /* IBUS_OVER_VOTER: 输入总线过流保护 */
+    int slow_chg_ma;       /* SLOW_CHG_VOTER: 慢充模式电流限制 */
+    int plc_ma;            /* PLC_VOTER: PLC通信电流限制 */
+    int pr_ma;             /* PR_VOTER: PR(优先级)控制 */
+    int bad_sub_btb_ma;    /* BAD_SUB_BTB_VOTER: 子板BTB连接异常 */
 } UfcsVoters;
 
 /* 解析 bcc_parms 字符串 */

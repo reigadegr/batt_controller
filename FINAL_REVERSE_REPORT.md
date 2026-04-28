@@ -54,38 +54,84 @@ ELF 64-bit ARM aarch64, PIE, stripped, NDK r26d, 动态链接 + 静态 OpenSSL (
 
 ### 3.1 UFCS_CURR Voter 完整列表 (22 个)
 
-| Voter | 说明 | 典型值 | 我们是否解析 |
-|-------|------|--------|-------------|
-| MAX_VOTER | 最大允许电流 | 14600 | ✅ |
-| HIDL_VOTER | HIDL 接口 | 0 | ❌ |
-| BAD_SUBBOARD_VOTER | 子板异常 | 0 | ❌ |
-| EIS_VOTER | 电化学阻抗 | 0 | ❌ |
-| IMP_VOTER | 阻抗限制 | 9100 | ❌ |
-| STEP_VOTER | 步进控制 | 9100→8000 | ✅ |
-| BATT_TEMP_VOTER | 电池温度 | 14600 | ❌ |
-| COOL_DOWN_VOTER | 降温限制 | 15000 | ❌ |
-| SALE_MODE_VOTER | 销售模式 | 0 | ❌ |
-| BCC_VOTER | BCC 限制 | 0 | ✅ |
-| BATT_BAL_VOTER | 电池均衡 | 0 | ❌ |
-| IBUS_OVER_VOTER | 总线过流 | 0 | ❌ |
-| SLOW_CHG_VOTER | 慢充 | 0 | ❌ |
-| CABLE_MAX_VOTER | 线缆限制 | 8000 | ✅ |
-| ADAPTER_IMAX_VOTER | 适配器限制 | 9100 | ❌ |
-| PLC_VOTER | PLC | 0 | ❌ |
-| IC_VOTER | IC 硬件限制 | 13700 | ❌ |
-| BATT_SOC_VOTER | SoC 限制 | en=1 v=2100 (全程常驻) | ❌ |
-| **LIMIT_FCL_VOTER** | **FCL 限制** | **0→7200** | ✅ |
-| PR_VOTER | PR | 0 | ❌ |
-| BASE_MAX_VOTER | 基础最大值 | 9100 | ❌ |
-| BAD_SUB_BTB_VOTER | 子板 BTB | 0 | ❌ |
+> 数据来源: sysfs_20260427_220852.csv (750 行, ~8.5 分钟, SOC 1%→43%)
 
-### 3.2 LIMIT_FCL_VOTER 行为 (CSV 确认)
+| # | Voter | 说明 | 是否常驻 | 典型值 | 解析状态 |
+|---|-------|------|---------|--------|----------|
+| 1 | MAX_VOTER | 硬件最大电流上限 | ✅ 始终 en=1 | 14600 | ✅ |
+| 2 | HIDL_VOTER | HIDL 接口设置 | ❌ 仅充电前 | 0 | ✅ |
+| 3 | BAD_SUBBOARD_VOTER | 子板异常保护 | ❌ 未触发 | 0 | ✅ |
+| 4 | EIS_VOTER | 电化学阻抗谱保护 | ❌ 未触发 | 0 | ✅ |
+| 5 | IMP_VOTER | 阻抗/脉冲电流限制 | ✅ 插充电器后 | 8000↔9100 | ✅ |
+| 6 | STEP_VOTER | 阶梯式电流限制 | ✅ 插充电器后 | 9100→8000 | ✅ |
+| 7 | BATT_TEMP_VOTER | 电池温度保护 | ✅ 插充电器后 | 14600 (未触发) | ✅ |
+| 8 | COOL_DOWN_VOTER | 降温/降功率控制 | ✅ 插充电器后 | 15000 (未触发) | ✅ |
+| 9 | SALE_MODE_VOTER | 展台模式限制 | ❌ 未触发 | 15000 | ✅ |
+| 10 | BCC_VOTER | BCC 协议限制 | ❌ 未触发 | 0 | ✅ |
+| 11 | BATT_BAL_VOTER | 电池均衡限制 | ❌ 未触发 | 0 | ✅ |
+| 12 | IBUS_OVER_VOTER | 输入总线过流保护 | ❌ 未触发 | 0 | ✅ |
+| 13 | SLOW_CHG_VOTER | 慢充模式限制 | ❌ 未触发 | 0 | ✅ |
+| 14 | CABLE_MAX_VOTER | 线缆最大电流 | ✅ 始终 en=1 | 8000 | ✅ |
+| 15 | ADAPTER_IMAX_VOTER | 适配器最大输出 | ✅ 始终 en=1 | 9100 | ✅ |
+| 16 | PLC_VOTER | PLC 通信限制 | ❌ 未触发 | 0 | ✅ |
+| 17 | IC_VOTER | 充电 IC 硬件限制 | ✅ 始终 en=1 | 13700 | ✅ |
+| 18 | BATT_SOC_VOTER | SoC 限制电流 | ❌ 本次未触发 | 0 | ✅ |
+| 19 | LIMIT_FCL_VOTER | FCL 满充限制 | ✅ SOC>16%后 | 7200 | ✅ |
+| 20 | PR_VOTER | 优先级控制 | ❌ 未触发 | 0 | ✅ |
+| 21 | BASE_MAX_VOTER | 基础最大电流 | ✅ 始终 en=1 | 9100 | ✅ |
+| 22 | BAD_SUB_BTB_VOTER | 子板 BTB 连接异常 | ❌ 未触发 | 0 | ✅ |
+
+### 3.2 常驻活跃 Voter 分类
+
+| 类别 | Voter | 值 | 说明 |
+|------|-------|-----|------|
+| **硬件上限** | MAX_VOTER | 14600 | 系统允许的最大充电电流 |
+| **协议限制** | ADAPTER_IMAX_VOTER | 9100 | 适配器协商最大输出 |
+| **协议限制** | BASE_MAX_VOTER | 9100 | 基础电流限制 |
+| **线缆限制** | CABLE_MAX_VOTER | 8000 | 8A 线缆载流能力 |
+| **IC 限制** | IC_VOTER | 13700 | 充电芯片硬件限制 |
+| **温度保护** | BATT_TEMP_VOTER | 14600 | 未触达阈值 |
+| **降温控制** | COOL_DOWN_VOTER | 15000 | 未触发 |
+
+### 3.3 动态激活 Voter
+
+| Voter | 激活条件 | 典型值 | 成为 effective |
+|-------|---------|--------|---------------|
+| IMP_VOTER | 电流上升阶段 | 8000mA | ✅ 与 CABLE 交替 |
+| LIMIT_FCL_VOTER | SOC > 16% | 7200mA | ✅ 后期主导 |
+| STEP_VOTER | 插充电器后 | 9100→8000mA | ❌ 始终高于 FCL |
+| HIDL_VOTER | 仅充电前 5 秒 | 0 | ❌ |
+
+### 3.4 effective 变化时序
+
+```
+时间          SOC   effective voter       值(mA)  阶段
+22:08:52      1%    MAX_VOTER             14600   未插入
+22:08:57      1%    CABLE_MAX_VOTER        8000   插入充电器
+22:09:03      1%    IMP_VOTER              8000   阻抗保护激活
+22:09:10      1%    CABLE_MAX_VOTER        8000   稳定期
+22:11:49      16%   LIMIT_FCL_VOTER        7200   FCL 限流激活
+22:17:30      43%   LIMIT_FCL_VOTER        7200   至采集结束
+```
+
+### 3.5 限流瓶颈链
+
+```
+CABLE_MAX_VOTER (8000mA)
+      ↓
+LIMIT_FCL_VOTER (7200mA, SOC>16%后)
+      ↓
+effective = 7200mA
+```
+
+### 3.6 LIMIT_FCL_VOTER 行为 (CSV 确认)
 
 - **激活条件**: SoC=16%, temp=48.1°C
 - **限制值**: v=7200
 - **特性**: 一旦激活**永不关闭**
+- **影响**: 成为 effective voter，限制电流从 8000 降至 7200mA
 
-### 3.3 BATT_SOC_VOTER 行为 (2026-04-28 strace 确认)
+### 3.7 BATT_SOC_VOTER 行为 (2026-04-28 strace 确认)
 
 **重要澄清**: 之前的报告中记录的 `en=1 v=2100` 数据可能来自另一次充电会话（高SOC场景）。本次充电会话（SOC最高43%）的实际数据：
 
@@ -228,7 +274,7 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 |------|------|
 | sysfs/procfs 12 路径读写 | ✅ |
 | bcc_parms 19 字段解析 | ✅ |
-| UFCS voter 解析 (4 个) | ✅ |
+| UFCS voter 解析 (22 个) | ✅ |
 | dumpsys fork+exec 重置序列 | ✅ |
 | UFCS/PPS 协议选择 | ✅ |
 | 温控电流偏移 (temp_01c 驱动) | ✅ |
@@ -271,6 +317,9 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | **quickstart 动态系数** | 公式 `target = ufcs_max_ma` (bcc_parms[14])，与温度无关。源码系数13应为14 |
 | **adjust_step 触发** | 确认是 `ramp_idx>=5 && ramp_idx<=6` 触发，非剩余距离驱动 |
 | **BATT_SOC_VOTER** | 内核侧机制，SOC超阈值(80%+)时自动启用。opbatt_control不直接控制 |
+| **22个voter完整解析** | 常驻8个(活跃), 动态激活3个, 未触发11个 |
+| **限流瓶颈链** | CABLE_MAX(8000) → LIMIT_FCL(7200, SOC>16%后) |
+| **effective变化** | MAX(14600) → CABLE(8000) → LIMIT_FCL(7200) |
 
 ---
 

@@ -58,10 +58,28 @@ static int extract_voter_int(const char *status, const char *tag)
 int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters)
 {
     memset(voters, 0, sizeof(*voters));
-    voters->max_ma       = extract_voter_int(status, "MAX_VOTER:");
-    voters->cable_max_ma = extract_voter_int(status, "CABLE_MAX_VOTER:");
-    voters->step_ma      = extract_voter_int(status, "STEP_VOTER:");
-    voters->bcc_ma       = extract_voter_int(status, "BCC_VOTER:");
+    voters->max_ma         = extract_voter_int(status, "MAX_VOTER:");
+    voters->cable_max_ma   = extract_voter_int(status, "CABLE_MAX_VOTER:");
+    voters->step_ma        = extract_voter_int(status, "STEP_VOTER:");
+    voters->bcc_ma         = extract_voter_int(status, "BCC_VOTER:");
+    voters->adapter_imax_ma = extract_voter_int(status, "ADAPTER_IMAX_VOTER:");
+    voters->ic_ma          = extract_voter_int(status, "IC_VOTER:");
+    voters->base_max_ma    = extract_voter_int(status, "BASE_MAX_VOTER:");
+    voters->batt_temp_ma   = extract_voter_int(status, "BATT_TEMP_VOTER:");
+    voters->cool_down_ma   = extract_voter_int(status, "COOL_DOWN_VOTER:");
+    voters->imp_ma         = extract_voter_int(status, "IMP_VOTER:");
+    voters->limit_fcl_ma   = extract_voter_int(status, "LIMIT_FCL_VOTER:");
+    voters->batt_soc_ma    = extract_voter_int(status, "BATT_SOC_VOTER:");
+    voters->sale_mode_ma   = extract_voter_int(status, "SALE_MODE_VOTER:");
+    voters->hidl_ma        = extract_voter_int(status, "HIDL_VOTER:");
+    voters->bad_subboard_ma = extract_voter_int(status, "BAD_SUBBOARD_VOTER:");
+    voters->eis_ma         = extract_voter_int(status, "EIS_VOTER:");
+    voters->batt_bal_ma    = extract_voter_int(status, "BATT_BAL_VOTER:");
+    voters->ibus_over_ma   = extract_voter_int(status, "IBUS_OVER_VOTER:");
+    voters->slow_chg_ma    = extract_voter_int(status, "SLOW_CHG_VOTER:");
+    voters->plc_ma         = extract_voter_int(status, "PLC_VOTER:");
+    voters->pr_ma          = extract_voter_int(status, "PR_VOTER:");
+    voters->bad_sub_btb_ma = extract_voter_int(status, "BAD_SUB_BTB_VOTER:");
     return 0;
 }
 
