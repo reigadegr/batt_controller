@@ -157,18 +157,15 @@ static int cli_read_sysfs(CliMode mode)
 
 static int cli_force_current(const CliArgs *args)
 {
-    SysfsFds fds;
-    if (sysfs_open_all(&fds) < 0) return -1;
     if (args->mode == CLI_MODE_PPS) {
-        sysfs_write_int(fds.pps_force_val, args->value);
-        sysfs_write_str(fds.pps_force_active, "1");
+        sysfs_write_proc_int(PROC_PPS_FORCE_VAL, args->value);
+        sysfs_write_proc_str(PROC_PPS_FORCE_ACTIVE, "1");
         printf("PPS force_val set to %d mA\n", args->value);
     } else {
-        sysfs_write_int(fds.ufcs_force_val, args->value);
-        sysfs_write_str(fds.ufcs_force_active, "1");
+        sysfs_write_proc_int(PROC_UFCS_FORCE_VAL, args->value);
+        sysfs_write_proc_str(PROC_UFCS_FORCE_ACTIVE, "1");
         printf("UFCS force_val set to %d mA\n", args->value);
     }
-    sysfs_close_all(&fds);
     return 0;
 }
 

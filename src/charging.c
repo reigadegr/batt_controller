@@ -131,12 +131,13 @@ int get_temp_curr_offset(const BattConfig *cfg, int temp_01c)
 
 void write_current(SysfsFds *fds, int use_ufcs, int ma)
 {
+    (void)fds;
     if (use_ufcs) {
-        sysfs_write_int(fds->ufcs_force_val, ma);
-        sysfs_write_str(fds->ufcs_force_active, "1");
+        sysfs_write_proc_int(PROC_UFCS_FORCE_VAL, ma);
+        sysfs_write_proc_str(PROC_UFCS_FORCE_ACTIVE, "1");
     } else {
-        sysfs_write_int(fds->pps_force_val, ma);
-        sysfs_write_str(fds->pps_force_active, "1");
+        sysfs_write_proc_int(PROC_PPS_FORCE_VAL, ma);
+        sysfs_write_proc_str(PROC_PPS_FORCE_ACTIVE, "1");
     }
 }
 

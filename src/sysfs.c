@@ -13,10 +13,6 @@
 #define PATH_ADAPTER_POWER      "/sys/class/oplus_chg/common/adapter_power"
 #define PATH_BCC_CURRENT        "/sys/class/oplus_chg/battery/bcc_current"
 #define PATH_MMI_CHARGING       "/sys/class/oplus_chg/battery/mmi_charging_enable"
-#define PATH_PPS_FORCE_VAL      "/proc/oplus-votable/PPS_CURR/force_val"
-#define PATH_PPS_FORCE_ACTIVE   "/proc/oplus-votable/PPS_CURR/force_active"
-#define PATH_UFCS_FORCE_VAL     "/proc/oplus-votable/UFCS_CURR/force_val"
-#define PATH_UFCS_FORCE_ACTIVE  "/proc/oplus-votable/UFCS_CURR/force_active"
 #define PATH_BCC_PARMS          "/sys/class/oplus_chg/battery/bcc_parms"
 #define PATH_BATTERY_LOG        "/sys/class/oplus_chg/battery/battery_log_content"
 
@@ -44,17 +40,14 @@ int sysfs_open_all(SysfsFds *fds)
     fds->adapter_power       = open_ro(PATH_ADAPTER_POWER);
     fds->bcc_current         = open_wo(PATH_BCC_CURRENT);
     fds->mmi_charging_enable = open_wo(PATH_MMI_CHARGING);
-    fds->pps_force_val       = open_wo(PATH_PPS_FORCE_VAL);
-    fds->pps_force_active    = open_wo(PATH_PPS_FORCE_ACTIVE);
-    fds->ufcs_force_val      = open_wo(PATH_UFCS_FORCE_VAL);
-    fds->ufcs_force_active   = open_wo(PATH_UFCS_FORCE_ACTIVE);
+    /* PPS/UFCS force 用 open-write-close，不持有持久 fd */
 
     /* 检查关键 fd 是否打开成功 */
     if (fds->usb_online < 0) return -1;
     return 0;
 }
 
-_Static_assert(sizeof(SysfsFds) == 10 * sizeof(int),
+_Static_assert(sizeof(SysfsFds) == 6 * sizeof(int),
                "SysfsFds must contain only int fields for close_all iteration");
 
 void sysfs_close_all(SysfsFds *fds)
@@ -103,13 +96,34 @@ int sysfs_write_str(int fd, const char *val)
     return (int)write(fd, val, strlen(val));
 }
 
-void sysfs_reset_votables(SysfsFds *fds)
+void sysfs_reset_votables(void)
 {
     /* strace 确认：初始化时写 "0" 到 4 个 votable 节点 */
-    sysfs_write_str(fds->pps_force_val,      "0");
-    sysfs_write_str(fds->pps_force_active,   "0");
-    sysfs_write_str(fds->ufcs_force_val,     "0");
-    sysfs_write_str(fds->ufcs_force_active,  "0");
+    sysfs_write_proc_str(PROC_PPS_FORCE_VAL,      "0");
+    sysfs_write_proc_str(PROC_PPS_FORCE_ACTIVE,   "0");
+    sysfs_write_proc_str(PROC_UFCS_FORCE_VAL,     "0");
+    sysfs_write_proc_str(PROC_UFCS_FORCE_ACTIVE,  "0");
+}
+
+static int write_proc(const char *path, const char *buf, int len)
+{
+    int fd = open(path, O_WRONLY | O_TRUNC | O_CLOEXEC);
+    if (fd < 0) return -1;
+    int ret = (int)write(fd, buf, (size_t)len);
+    close(fd);
+    return ret;
+}
+
+int sysfs_write_proc_int(const char *path, int value)
+{
+    char buf[16];
+    int len = snprintf(buf, sizeof(buf), "%d", value);
+    return write_proc(path, buf, len);
+}
+
+int sysfs_write_proc_str(const char *path, const char *val)
+{
+    return write_proc(path, val, (int)strlen(val));
 }
 
 /* 通用临时打开+读取+关闭 */

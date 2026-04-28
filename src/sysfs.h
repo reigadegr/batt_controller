@@ -5,6 +5,9 @@
  * sysfs / proc 读写模块
  * 管理充电控制相关的文件描述符
  *
+ * sysfs 节点保持持久 fd (支持 lseek + read/write)
+ * proc 节点使用 open-write-close 模式 (proc 不支持 lseek，写入会追加)
+ *
  * fd 映射 (来自 strace 实测):
  *   fd 3:  /sys/class/power_supply/usb/online          (R)
  *   fd 4:  /sys/class/power_supply/battery/temp        (R)
@@ -12,14 +15,17 @@
  *   fd 7:  /sys/class/oplus_chg/common/adapter_power   (R)
  *   fd 8:  /sys/class/oplus_chg/battery/bcc_current    (W)
  *   fd 9:  /sys/class/oplus_chg/battery/mmi_charging_enable (W)
- *   fd 10: /proc/oplus-votable/PPS_CURR/force_val      (W)
- *   fd 11: /proc/oplus-votable/PPS_CURR/force_active   (W)
- *   fd 12: /proc/oplus-votable/UFCS_CURR/force_val     (W)
- *   fd 13: /proc/oplus-votable/UFCS_CURR/force_active  (W)
  *   (UFCS_CURR/status 用临时打开 read_temp_file, fd 6 不持久持有)
+ *   (PPS/UFCS force_val/force_active 用 open-write-close)
  */
 
-/* sysfs/proc 文件描述符集合 */
+/* proc votable 写入路径 (open-write-close 模式) */
+#define PROC_PPS_FORCE_VAL      "/proc/oplus-votable/PPS_CURR/force_val"
+#define PROC_PPS_FORCE_ACTIVE   "/proc/oplus-votable/PPS_CURR/force_active"
+#define PROC_UFCS_FORCE_VAL     "/proc/oplus-votable/UFCS_CURR/force_val"
+#define PROC_UFCS_FORCE_ACTIVE  "/proc/oplus-votable/UFCS_CURR/force_active"
+
+/* sysfs/proc 文件描述符集合 (仅持久持有支持 lseek 的 sysfs fd) */
 typedef struct {
     int usb_online;              /* fd 3 */
     int battery_temp;            /* fd 4 */
@@ -28,16 +34,12 @@ typedef struct {
     int adapter_power;           /* fd 7 */
     int bcc_current;             /* fd 8  (W) */
     int mmi_charging_enable;     /* fd 9  (W) */
-    int pps_force_val;           /* fd 10 (W) */
-    int pps_force_active;        /* fd 11 (W) */
-    int ufcs_force_val;          /* fd 12 (W) */
-    int ufcs_force_active;       /* fd 13 (W) */
 } SysfsFds;
 
 /* 临时打开一个 sysfs 节点 (只读)，返回 fd，失败返回 -1 */
 int sysfs_open_ro(const char *path);
 
-/* 打开所有 sysfs/proc 节点，返回 0 成功，-1 失败 */
+/* 打开所有 sysfs 节点，返回 0 成功，-1 失败 */
 int sysfs_open_all(SysfsFds *fds);
 
 /* 关闭所有 fd */
@@ -49,14 +51,20 @@ int sysfs_read_int(int fd);
 /* 读取字符串 (lseek 到开头再读)，返回读取的字节数 */
 int sysfs_read_str(int fd, char *buf, int bufsz);
 
-/* 写入整数值 */
+/* 写入整数值 (仅用于 sysfs fd，不适用于 proc) */
 int sysfs_write_int(int fd, int value);
 
-/* 写入字符串 */
+/* 写入字符串 (仅用于 sysfs fd，不适用于 proc) */
 int sysfs_write_str(int fd, const char *val);
 
+/* 向 proc 文件写入整数 (open-write-close，避免追加问题) */
+int sysfs_write_proc_int(const char *path, int value);
+
+/* 向 proc 文件写入字符串 (open-write-close，避免追加问题) */
+int sysfs_write_proc_str(const char *path, const char *val);
+
 /* 初始化 PPS/UFCS force 为 0 (关闭强制模式) */
-void sysfs_reset_votables(SysfsFds *fds);
+void sysfs_reset_votables(void);
 
 /* 读取 bcc_parms (临时打开 /sys/class/oplus_chg/battery/bcc_parms) */
 int sysfs_read_bcc_parms(char *buf, int bufsz);

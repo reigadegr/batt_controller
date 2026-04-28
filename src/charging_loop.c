@@ -20,7 +20,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     sysfs_read_battery_log(log_buf, sizeof(log_buf));
 
     /* ---- 阶段 2: 重置 votable ---- */
-    sysfs_reset_votables(fds);
+    sysfs_reset_votables();
 
     read_voters_3x(log_buf, sizeof(log_buf), &c.voters);
 

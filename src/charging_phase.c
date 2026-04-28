@@ -17,7 +17,7 @@ int handle_cycle_end(LoopCtx *c, char *log_buf)
         return 0;
 
     /* 重置所有 votable */
-    sysfs_reset_votables(c->fds);
+    sysfs_reset_votables();
 
     /* dumpsys 电池控制序列 */
     charging_dumpsys_reset(c->fds);

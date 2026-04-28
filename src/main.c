@@ -47,7 +47,7 @@ static void *charging_thread_wrapper(void *arg)
             sleep(2);
             continue;
         }
-        sysfs_reset_votables(&fds);
+        sysfs_reset_votables();
 
         /* 进入充电控制主循环 */
         charging_loop(&fds, &st->config, &st->charging_active);
