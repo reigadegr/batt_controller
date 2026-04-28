@@ -49,6 +49,7 @@ int config_parse(const char *path, BattConfig *cfg)
     cfg->restart_rise_step = 50;
     cfg->depol_pulse_ma = 500;
     cfg->depol_zero_ma = 0;
+    cfg->depol_neg_step = 150;
 
     /* strace 确认: SoC<20 → 450ms, SoC≥20 → 650ms */
     cfg->ufcs_soc_mon[0] = 20;
@@ -133,6 +134,8 @@ int config_parse(const char *path, BattConfig *cfg)
             cfg->depol_pulse_ma = atoi(v);
         } else if ((v = extract_value(line, "depol_zero_ma"))) {
             cfg->depol_zero_ma = atoi(v);
+        } else if ((v = extract_value(line, "depol_neg_step"))) {
+            cfg->depol_neg_step = atoi(v);
         } else if ((v = extract_value(line, "enabled"))) {
             cfg->enabled = atoi(v);
         }
@@ -198,6 +201,7 @@ void config_dump(const BattConfig *cfg)
     printf("restart_rise_step: %d\n", cfg->restart_rise_step);
     printf("depol_pulse_ma: %d\n", cfg->depol_pulse_ma);
     printf("depol_zero_ma: %d\n", cfg->depol_zero_ma);
+    printf("depol_neg_step: %d\n", cfg->depol_neg_step);
 
     printf("loop_interval_ms: %d\n", cfg->loop_interval_ms);
     printf("============================\n");

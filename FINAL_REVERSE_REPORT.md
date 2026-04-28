@@ -2,6 +2,7 @@
 
 > 目标: 开源重写 opbatt_control 充电控制核心
 > 更新: 2026-04-28 (完整充电周期 strace + 完整行为对齐)
+> 更新: 2026-04-28 (二次分析: force_val 负值确认 + FULL=1000 修正 + BATT_SOC_VOTER 数据)
 
 ---
 
@@ -71,7 +72,7 @@ XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/
 | ADAPTER_IMAX_VOTER | 适配器限制 | 9100 | ❌ |
 | PLC_VOTER | PLC | 0 | ❌ |
 | IC_VOTER | IC 硬件限制 | 13700 | ❌ |
-| BATT_SOC_VOTER | SoC 限制 | 0 (本次未激活) | ❌ |
+| BATT_SOC_VOTER | SoC 限制 | en=1 v=2100 (全程常驻) | ❌ |
 | **LIMIT_FCL_VOTER** | **FCL 限制** | **0→7200** | ✅ |
 | PR_VOTER | PR | 0 | ❌ |
 | BASE_MAX_VOTER | 基础最大值 | 9100 | ❌ |
@@ -127,16 +128,20 @@ XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/
 1300 ↔ 1350 ↔ 1400 ↔ 1550 ↔ 1500 ↔ 1450 ↔ 1500 ↔ 1450 ↔ 1400 ↔ 1350 ↔ 1300 ↔ 1250 ↔ 1200 ↔ 1250 ↔ 1200 ↔ 1150 ↔ 1100 ↔ 1050 ↔ 1000 ↔ 950 ↔ 900 ↔ 850
 ```
 
-**第四阶段: 极低电流 + 去极化**
+**第四阶段: 极低电流 + 去极化 (含负值 force_val)**
 ```
 850 → 650 (-200) → 600 → 400 (-200) → 300 → 250 → 50 (-200)
-50 → 500 (+450, 去极化!) → 300 → 250 → 50 → 0
-500 → 300 → 250 → 50 → 0 (第二轮去极化)
+50 → -100 (负值! 首次去极化负值)
+-100 → 500 (+600, 脉冲) → 300 → 250 → 50 → 0
+0 → -50 → -200 → -350 (负值递减, 步长 -150)
+-350 → 500 (+850, 第二轮脉冲) → 300 → 250 → 50
+50 → 1000 (进入 FULL)
 ```
 
-**第五阶段: 新周期重启**
+**第五阶段: FULL + 新周期重启**
 ```
-500 → 300 → 250 → 50 → 1000 (+950)
+1000 (持续写入, SoC=100%)
+dumpsys battery reset 后:
 1000 → 1050 → 1100 → ... → 1850 (+50mA/步)
 1850 → 1000 (-850, 大跳降)
 ```
@@ -160,6 +165,9 @@ XOR 字符串混淆，~2877 函数无符号。网络仅 AF_UNIX → /dev/socket/
 | 5 | **CV 阶段有振荡** | CV 只减不增 | 3000↔2950↔3000 振荡，电流可回升 |
 | 6 | **dumpsys reset 后无 mmi toggle** | dumpsys reset + mmi 0→1 | 只有 dumpsys reset，无 mmi 写入 |
 | 7 | **CV 降流是大跳降** | 阶梯式递减 | 3500→3000(-500), 3000→1300(-1700) 一步到位 |
+| 8 | **force_val 写入负值** | force_val 从不写负值 | DEPOL 阶段写 -100, -50, -200, -350 |
+| 9 | **FULL 阶段 force_val=1000** | FULL 写 500mA | strace 末尾持续写 1000mA |
+| 10 | **BATT_SOC_VOTER 全程 en=1 v=2100** | 本次未激活 | 从充电开始到结束始终激活，但从未成为 effective voter |
 
 ---
 
@@ -177,9 +185,9 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
                                 ▼
                               TC (极低电流: 850→650→400→250→50)
                                 │
-                                │ force_val = 0
+                                │ force_val 进入负值
                                 ▼
-                              DEPOL (去极化: 0→500→300→250→50→0, 可多轮)
+                DEPOL (去极化: 50→-100→500→300→250→50→0→-50→-200→-350→500→300→250→50)
                                 │
                                 │ 去极化完成
                                 ▼
@@ -227,11 +235,12 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | # | 功能 | 改动 |
 |---|------|------|
 | 1 | **重启 RISE (+50mA 线性)** | ✅ PHASE_RESTART_RISE，+50mA/步，无 quickstart |
-| 2 | **去极化阶段** | ✅ PHASE_DEPOL，pulse→降→0，多轮 |
+| 2 | **去极化阶段** | ✅ PHASE_DEPOL，两轮脉冲+负值序列 (-100→...→-350) |
 | 3 | **CV 振荡/电流回升** | ✅ cv_holding 中检查 vbat 回落到较低阶梯 |
 | 4 | **充电周期结束检测** | ✅ thermal_hi ≤ 20 + current_ma ≤ 100 → dumpsys reset |
 | 5 | **dumpsys reset 序列** | ✅ 只做 dumpsys battery reset，无 mmi toggle |
-| 6 | **effective_max + ufcs_max_ma** | ⚠️ 未额外限制，thermal_hi×100 已间接覆盖（见"仍需验证"） |
+| 6 | **FULL force_val=1000** | ✅ 修正: 从 500 改为 1000 (strace 确认) |
+| 7 | **DEPOL 负值 force_val** | ✅ 新增 depol_neg_step 配置 (默认 150)，DEPOL 写 -100/-50/-200/-350 |
 
 ### 仍需更多数据 ⚠️
 
@@ -239,7 +248,8 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 |------|------|
 | quickstart 动态系数 | 公式 `cable_max * X / 80`, X=9~21, 可能与温度相关 |
 | adjust_step 触发条件 | 可能是剩余距离驱动而非固定 ramp_idx |
-| BATT_SOC_VOTER | 本次数据 SoC=100% 时 thermal_hi=0, 未见 BATT_SOC_VOTER 激活 |
+| BATT_SOC_VOTER 限流逻辑 | CSV 确认全程 en=1 v=2100，但从未成为 effective voter；需验证其他场景下是否成为 effective |
+| CV 阶梯实际值 | 配置文件 /data/opbatt/batt_control 设备上不存在，需安装模块后获取 |
 
 ---
 
@@ -251,9 +261,29 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | `0xd6c94` | 主循环函数入口 | 完整 prologue + xor 常量初始化 |
 | `0xd6be4` | `MOV #500` → `[x24, #0x6d8]` | 结构体中 current_ma 字段写入 |
 | `0xd5d08` | `sub w8, w8, #0x190` (减 400) | 可能是 CV 降流逻辑 |
-| `0xd5c94` | `MOV #500` + `blr x8` | 可能是 FULL 阶段写 500mA |
+| `0xd5c94` | `MOV #500` + `blr x8` | DEPOL 脉冲初始值 (非 FULL) |
 
 config 值硬编码在二进制中，字符串全部 XOR 混淆。
+
+### 二次分析补充 (2026-04-28)
+
+**force_val 负值证据 (strace 原始行):**
+```
+9186  16:08:26.057724 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "-100", 4) = 4
+9186  16:08:28.944937 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "-50", 3) = 3
+9186  16:08:29.420179 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "-200", 4) = 4
+9186  16:08:29.915132 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "-350", 4) = 4
+```
+
+**FULL=1000mA 证据 (strace 末尾):**
+```
+9186  16:10:31.001096 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "1000", 4) = 4
+9186  16:10:31.487107 write(12</proc/oplus-votable/UFCS_CURR/force_val>, "1000", 4) = 4
+```
+
+**BATT_SOC_VOTER 常驻证据 (sysfs_20260428_154917.csv):**
+- 第 2 行 (15:49:18) 起: `BATT_SOC_VOTER: en=1 v=2100`
+- 始终未成为 effective voter: `effective=STEP_VOTER` 或 `effective=CABLE_MAX_VOTER`
 
 ---
 
@@ -265,24 +295,25 @@ config 值硬编码在二进制中，字符串全部 XOR 混淆。
 | # | 功能 | 文件 | 状态 |
 |---|------|------|------|
 | 1 | PHASE_RESTART_RISE + PHASE_DEPOL 枚举 | `charging.h` | ✅ |
-| 2 | restart_rise_step / depol_pulse_ma / depol_zero_ma 配置字段 | `config.h` | ✅ |
+| 2 | restart_rise_step / depol_pulse_ma / depol_zero_ma / depol_neg_step 配置字段 | `config.h` | ✅ |
 | 3 | 新配置键解析 + config_dump 输出 | `config.c` | ✅ |
 | 4 | load_config 默认值 | `main.c` | ✅ |
 | 5 | dumpsys_reset（去掉 mmi_charging_enable toggle） | `charging.c` | ✅ |
 | 6 | 周期结束检测（thermal_hi ≤ 20 + current_ma ≤ 100） | `charging.c` | ✅ |
 | 7 | PHASE_RESTART_RISE（+50mA 线性爬升，无 quickstart） | `charging.c` | ✅ |
-| 8 | PHASE_DEPOL（pulse→降→0） | `charging.c` | ✅ |
+| 8 | PHASE_DEPOL（负值序列: -100→500→300→250→50→0→-50→-200→-350→500→300→250→50） | `charging_phase.c` | ✅ |
 | 9 | CV 阶段振荡回升（vbat 回落到较低阶梯） | `charging.c` | ✅ |
 | 10 | phase_name / next_phase 更新 | `charging.c` | ✅ |
+| 11 | FULL force_val=1000mA（非 500） | `charging_loop.c` | ✅ |
 
 ### 待验证事项
 
 | 功能 | 说明 |
 |------|------|
-| DEPOL 执行时机 | thermal_hi ≤ 20 + current_ma ≤ 100 同时满足时，周期结束检测先触发 RESTART_RISE 跳过 DEPOL；需实际 strace 验证 |
+| DEPOL 负值步长 | 默认 150mA，需更多 strace 验证不同充电周期的负值序列是否一致 |
 | quickstart 系数 | 公式 `cable_max * X / 80`，X=9~21 可能与温度相关 |
 | adjust_step 触发 | 可能是剩余距离驱动而非固定 ramp_idx |
-| BATT_SOC_VOTER | 本次 SoC=100% 时 thermal_hi=0，未见该 voter 激活 |
+| BATT_SOC_VOTER 限流 | CSV 确认 en=1 v=2100 全程常驻，但从未成为 effective；需验证其他场景 |
 | effective_max + ufcs_max_ma | thermal_hi×100 已间接覆盖，但 thermal_hi 极低时 ufcs_max 本身也变小，未显式处理 |
 
 ### 验证方法

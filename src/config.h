@@ -76,6 +76,7 @@ typedef struct {
     /* 去极化阶段 */
     int      depol_pulse_ma;                 /* 去极化脉冲电流 (mA), 默认 500 */
     int      depol_zero_ma;                  /* 去极化零电流 (mA), 默认 0 */
+    int      depol_neg_step;                 /* 去极化负值步长 (mA), 默认 150 */
 
     /* 使能标志 */
     int      enabled;                        /* 总开关 */

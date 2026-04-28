@@ -79,6 +79,7 @@ static void load_config(BattConfig *cfg)
         cfg->restart_rise_step = 50;
         cfg->depol_pulse_ma = 500;
         cfg->depol_zero_ma = 0;
+        cfg->depol_neg_step = 150;
     }
 }
 

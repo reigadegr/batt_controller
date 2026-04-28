@@ -243,21 +243,44 @@ void exec_depol(LoopCtx *c)
     char ts[32], line[256];
 
     /* 去极化阶段 (strace 2026-04-28 完整周期确认):
-     * force_val 写极低值和 0, 让内核驱动执行去极化。
-     * 观测序列: 50→500→300→250→50→0, 可多轮。
+     * 完整序列: 50→-100→500→300→250→50→0→-50→-200→-350→500→300→250→50
+     * 两轮脉冲+负值去极化。force_val 确实写入负值。
      */
     int pulse = c->cfg->depol_pulse_ma > 0 ? c->cfg->depol_pulse_ma : 500;
+    int neg_step = c->cfg->depol_neg_step > 0 ? c->cfg->depol_neg_step : 150;
+
+    /* Round 1: 初始负值 + 脉冲下降至 0 */
+    write_current(c->fds, c->use_ufcs, -(neg_step * 2 / 3));
+    usleep(500000);
 
     write_current(c->fds, c->use_ufcs, pulse);
     usleep(500000);
+    write_current(c->fds, c->use_ufcs, 300);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 250);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 50);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 0);
+    usleep(500000);
 
-    for (int v = 200; v >= 0; v -= 50) {
+    /* Round 2: 负值递减 + 脉冲下降 */
+    int neg = -50;
+    for (int i = 0; i < 3; i++) {
         if (!*c->running) break;
-        write_current(c->fds, c->use_ufcs, v > 0 ? v : 0);
+        write_current(c->fds, c->use_ufcs, neg);
         usleep(500000);
+        neg -= neg_step;
     }
 
-    write_current(c->fds, c->use_ufcs, 0);
+    write_current(c->fds, c->use_ufcs, pulse);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 300);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 250);
+    usleep(500000);
+    write_current(c->fds, c->use_ufcs, 50);
+    usleep(500000);
 
     get_timestamp(ts, sizeof(ts));
     snprintf(line, sizeof(line),

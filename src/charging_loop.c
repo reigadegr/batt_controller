@@ -93,7 +93,8 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             exec_depol(&c);
             break;
         case PHASE_FULL:
-            write_current(fds, c.use_ufcs, 500);
+            /* strace 确认: FULL 阶段持续写 1000mA (非 500) */
+            write_current(fds, c.use_ufcs, 1000);
             break;
         }
 
