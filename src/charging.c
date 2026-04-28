@@ -330,7 +330,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
         if (parms.thermal_hi > 0)
             in_charge_cycle = 1;
 
-        if (parms.thermal_hi <= 20 && in_charge_cycle) {
+        if (parms.thermal_hi <= 20 && in_charge_cycle && current_ma <= 100) {
             /* 重置所有 votable */
             sysfs_reset_votables(fds);
 
@@ -585,7 +585,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             usleep(500000);
 
             /* 逐步降到 0 */
-            for (int v = pulse - 200; v >= 0; v -= 50) {
+            for (int v = 200; v >= 0; v -= 50) {
                 if (!*running) break;
                 write_current(fds, use_ufcs, v > 0 ? v : 0);
                 usleep(500000);
