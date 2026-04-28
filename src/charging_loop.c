@@ -53,9 +53,6 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
         /* 读取 SoC */
         c.soc = sysfs_read_int(fds->chip_soc);
 
-        /* 读取电池温度 (strace 确认用 bcc_parms field[7] 即 temp_01c) */
-        sysfs_read_int(fds->battery_temp);
-
         /* 充电周期结束检测 */
         if (handle_cycle_end(&c, log_buf))
             continue;

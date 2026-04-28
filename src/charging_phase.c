@@ -85,9 +85,7 @@ void calc_effective_max(LoopCtx *c)
         if (t > 450 || t < 100) {
             c->effective_max = 0;
         } else if (t > 400 || t < 150) {
-            int halved = c->effective_max / 2;
-            if (halved < c->effective_max)
-                c->effective_max = halved;
+            c->effective_max /= 2;
         }
     }
 
