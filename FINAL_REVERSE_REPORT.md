@@ -262,7 +262,7 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 
 | 功能 | 说明 |
 |------|------|
-| CV 阶梯实际值 | 配置文件 /data/opbatt/batt_control 设备上不存在，需安装模块后获取 |
+| CV 阶梯实际值 | 配置文件中无 cv_step_mv/cv_step_ma，CV阶梯可能在内核或硬编码 |
 
 ### 2026-04-28 新发现 ✅
 
@@ -271,6 +271,80 @@ USB 插入 → IDLE ─────────→ RISE (quickstart 三段式: 5
 | **quickstart 动态系数** | 公式 `target = ufcs_max_ma` (bcc_parms[14])，与温度无关。源码系数13应为14 |
 | **adjust_step 触发** | 确认是 `ramp_idx>=5 && ramp_idx<=6` 触发，非剩余距离驱动 |
 | **BATT_SOC_VOTER** | 内核侧机制，SOC超阈值(80%+)时自动启用。opbatt_control不直接控制 |
+
+---
+
+## 六(续)、设备配置文件 (2026-04-28 su -c 读取)
+
+> 文件: `/data/opbatt/batt_control` (INI key=value 格式)
+
+```ini
+# 温控
+temp_range=42,43,44,45,46
+temp_curr_offset=800,1200,1800,2500,4500
+
+# 充电控制
+enabled=1
+inc_step=100
+dec_step=100
+
+# UFCS 重置
+max_ufcs_chg_reset_cc=1
+ufcs_reset_delay=180
+
+# 快充协议
+ufcs_max=9100
+pps_max=5000
+cable_override=0
+
+# SoC 监控区间
+ufcs_soc_mon=20,60
+ufcs_interval_ms=650,400
+pps_soc_mon=20,68
+pps_interval_ms=650,400
+
+# 主循环
+loop_interval_ms=2000
+
+# 电池电压控制
+batt_vol_thr=4559,4559
+batt_vol_soc=75,85
+batt_con_soc=94
+
+# RISE 阶段
+rise_quickstep_thr_mv=4250
+rise_wait_thr_mv=3800
+
+# CV (恒压) 阶段
+cv_vol_mv=4565
+cv_max_ma=5000
+
+# TC (涓流) 阶段
+tc_vol_thr_mv=4500
+tc_thr_soc=98
+tc_full_ma=400
+tc_vol_full_mv=4485
+
+# 充电完成
+curr_inc_wait_cycles=4
+batt_full_thr_mv=4570
+```
+
+### 关键发现
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| **ufcs_max** | 9100 | UFCS最大电流，用于quickstart计算 |
+| **cv_vol_mv** | 4565 | CV阶段进入电压 |
+| **cv_max_ma** | 5000 | CV阶段最大电流限制 |
+| **batt_full_thr_mv** | 4570 | 满电判定电压 |
+| **tc_full_ma** | 400 | 涓流充电电流 |
+| **rise_quickstep_thr_mv** | 4250 | quickstart高电压阈值 |
+
+**注意**: 配置文件中 **无 cv_step_mv/cv_step_ma** 字段，CV阶梯降流的阈值表可能在：
+1. 内核充电驱动中硬编码
+2. 其他配置文件中
+3. 通过sysfs动态读取
 
 ---
 
