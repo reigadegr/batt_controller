@@ -31,15 +31,17 @@ static void *charging_thread_wrapper(void *arg)
 {
     SharedState *st = (SharedState *)arg;
 
-    /* 等待 USB 在线 */
-    while (st->running && !st->charging_active) {
-        usleep(100000);  /* 100ms */
+    while (st->running) {
+        /* 等待 USB 在线 (与原始二进制一致: 2s 轮询) */
+        while (st->running && !st->charging_active) {
+            sleep(2);
+        }
+        if (!st->running) break;
+
+        /* 进入充电控制主循环 */
+        charging_loop(&st->fds, &st->config, &st->charging_active);
+        /* USB 拔出后 charging_active=0, 回到外层等待 */
     }
-
-    if (!st->running) return NULL;
-
-    /* 进入充电控制主循环 */
-    charging_loop(&st->fds, &st->config, &st->charging_active);
 
     return NULL;
 }
@@ -49,6 +51,8 @@ static void sighandler(int sig)
     (void)sig;
     g_state.running = 0;
     g_state.charging_active = 0;
+    /* 与原始二进制一致: 收到信号后直接退出，避免 SIGTERM 反复投递 */
+    _exit(0);
 }
 
 static void load_config(BattConfig *cfg)

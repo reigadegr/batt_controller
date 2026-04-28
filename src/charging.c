@@ -362,8 +362,9 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
                 log_write(line);
                 /* 超限后延迟等待, 防止频繁重置 */
                 int delay = cfg->ufcs_reset_delay > 0 ? cfg->ufcs_reset_delay : 10;
-                for (int i = 0; i < delay * 10 && *running; i++)
-                    usleep(100000);
+                int delay_ms = cfg->loop_interval_ms > 0 ? cfg->loop_interval_ms : 450;
+                for (int i = 0; i < delay * (1000 / delay_ms) && *running; i++)
+                    usleep((unsigned int)delay_ms * 1000);
                 restart_count = 0;
             }
 
