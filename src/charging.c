@@ -168,8 +168,8 @@ static int choose_protocol(const BattConfig *cfg, const BccParms *parms)
 static int get_temp_curr_offset(const BattConfig *cfg, int temp_01c)
 {
     int temp = temp_01c / 10;
-    for (int i = 0; i < cfg->temp_range_count; i++) {
-        if (temp <= cfg->temp_range[i]) {
+    for (int i = cfg->temp_range_count - 1; i >= 0; i--) {
+        if (temp >= cfg->temp_range[i]) {
             if (i < cfg->temp_curr_offset_count)
                 return cfg->temp_curr_offset[i];
             return 0;
@@ -187,25 +187,6 @@ static void write_current(SysfsFds *fds, int use_ufcs, int ma)
         sysfs_write_int(fds->pps_force_val, ma);
         sysfs_write_str(fds->pps_force_active, "1");
     }
-}
-
-/*
- * 根据 SoC 计算动态轮询间隔
- * SoC 在 [soc_mon[0], soc_mon[1]] 范围内时使用 interval_ms[0] (快轮询)
- * 范围外使用 interval_ms[1] (慢轮询)
- */
-static int calc_poll_interval(const int soc_mon[2], const int interval_ms[2], int soc)
-{
-    if (interval_ms[0] <= 0 && interval_ms[1] <= 0)
-        return -1;  /* 未配置, 使用默认间隔 */
-
-    if (soc_mon[0] <= 0 && soc_mon[1] <= 0)
-        return -1;
-
-    if (soc >= soc_mon[0] && soc < soc_mon[1])
-        return interval_ms[0] > 0 ? interval_ms[0] : interval_ms[1];
-
-    return interval_ms[1] > 0 ? interval_ms[1] : interval_ms[0];
 }
 
 /* 限制最大电流: 取 cfg/proto/cable 中最小的有效值 */
@@ -393,7 +374,7 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             cv_step_idx = 0;
             cv_holding = 0;
             in_charge_cycle = 0;
-            phase = PHASE_IDLE;
+            phase = PHASE_RISE;
             continue;
         }
 
@@ -434,22 +415,37 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
 
         case PHASE_RISE: {
             /*
-             * RISE 三段式 (strace 确认):
-             * 1. Quickstart: 500→1400 (同迭代双写, 无 sleep)
-             * 2. 递增斜坡: +750, +350, +450, +550
-             *    公式: round_to_50(cable_max / (22 - 4*ramp_idx))
-             * 3. 全速步进: +800 (= cable_max/10) 直到 cap
+             * RISE 三段式 (strace + 逆向确认):
+             * 1. Quickstart: 500 + round_to_50(cable_max * 13/80)
+             *    公式: step = cable_max * 13 / 80
+             * 2. 递增斜坡: 剩余距离除法
+             *    ramp_idx=1: step = round_to_50((cable_max - current) / 17)
+             *    ramp_idx=2~4: step = round_to_50((cable_max - current) / 11)
+             * 3. 全速步进: step = cable_max / 10 直到 cap
              */
             int phase_max = effective_max;
 
             if (current_ma == 500 && ramp_idx == 0) {
-                /* Quickstart: 写 500 后立即写 1400 */
-                int qs_step = (cable_max * 9) / 80;
-                qs_step = ((qs_step + 25) / 50) * 50;
+                /* Quickstart: 写 500 后立即写高值
+                 * vbat >= rise_quickstep_thr: 直接跳到 cable_max-750
+                 * vbat < rise_quickstep_thr:  渐进 500 + cable_max*13/80
+                 */
                 write_current(fds, use_ufcs, 500);
-                current_ma = 500 + qs_step;
+                if (cfg->rise_quickstep_thr_mv > 0 &&
+                    parms.vbat_mv >= cfg->rise_quickstep_thr_mv) {
+                    /* 高电压 quickstep: 一步逼近 cable_max */
+                    int margin = (cable_max * 3) / 32;
+                    margin = ((margin + 25) / 50) * 50;
+                    current_ma = cable_max - margin;
+                    ramp_idx = 99;  /* 跳过 ramp, 直接全速步进 */
+                } else {
+                    /* 低电压 quickstart: 渐进升流 */
+                    int qs_step = (cable_max * 13) / 80;
+                    qs_step = ((qs_step + 25) / 50) * 50;
+                    current_ma = 500 + qs_step;
+                    ramp_idx = 1;
+                }
                 write_current(fds, use_ufcs, current_ma);
-                ramp_idx = 1;
                 break;
             }
 
@@ -459,19 +455,19 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             }
 
             int step;
-            if (ramp_idx == 1) {
-                /* 首个斜坡步: 推测 cable_max*3/32 ≈ 750 */
-                step = (cable_max * 3) / 32;
+            if (ramp_idx >= 1 && ramp_idx <= 4) {
+                /* 斜坡阶段: 剩余距离除法 */
+                int remaining = cable_max - current_ma;
+                int divisor = (ramp_idx == 1) ? 17 : 11;
+                step = (remaining + divisor / 2) / divisor;
                 step = ((step + 25) / 50) * 50;
+                if (step > inc_step) step = inc_step;
+            } else if (cfg->adjust_step > 0 && ramp_idx >= 5 && ramp_idx <= 6) {
+                /* 微调过渡: adjust_step (strace 确认 2 步) */
+                step = cfg->adjust_step;
             } else {
-                int divisor = 22 - 4 * (ramp_idx - 2);
-                if (divisor <= 10) {
-                    step = cable_max > 0 ? cable_max / 10 : inc_step;
-                } else {
-                    step = (cable_max + divisor / 2) / divisor;
-                    step = ((step + 25) / 50) * 50;
-                    if (step > inc_step) step = inc_step;
-                }
+                /* 全速步进: cable_max / 10 */
+                step = cable_max > 0 ? cable_max / 10 : inc_step;
             }
 
             current_ma += step;
@@ -567,13 +563,6 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             phase = PHASE_FULL;
         }
 
-        /* 动态轮询间隔 */
-        int poll_ms = cfg->loop_interval_ms;
-        const int *mon = use_ufcs ? cfg->ufcs_soc_mon : cfg->pps_soc_mon;
-        const int *ival = use_ufcs ? cfg->ufcs_interval_ms : cfg->pps_interval_ms;
-        int ms = calc_poll_interval(mon, ival, soc);
-        if (ms > 0) poll_ms = ms;
-
-        usleep((unsigned int)poll_ms * 1000);
+        usleep(500000);
     }
 }
