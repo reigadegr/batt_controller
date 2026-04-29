@@ -1,0 +1,15 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+batt-common = { path = "../batt-common" }
+batt-config = { path = "../batt-config" }
+batt-sysfs = { path = "../batt-sysfs" }
+batt-monitor = { path = "../batt-monitor" }
+batt-charging = { path = "../batt-charging" }
+libc = "0.2"

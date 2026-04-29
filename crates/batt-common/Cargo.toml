@@ -1,0 +1,7 @@
+[package]
+name = "batt-common"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true

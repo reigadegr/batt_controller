@@ -1,0 +1,7 @@
+[package]
+name = "batt-config"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true

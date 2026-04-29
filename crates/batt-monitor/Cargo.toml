@@ -1,0 +1,11 @@
+[package]
+name = "batt-monitor"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+batt-sysfs = { path = "../batt-sysfs" }
+batt-config = { path = "../batt-config" }

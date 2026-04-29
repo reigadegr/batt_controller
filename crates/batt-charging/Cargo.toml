@@ -1,0 +1,13 @@
+[package]
+name = "batt-charging"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+batt-sysfs = { path = "../batt-sysfs" }
+batt-config = { path = "../batt-config" }
+batt-common = { path = "../batt-common" }
+libc = "0.2"
