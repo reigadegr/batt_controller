@@ -121,7 +121,10 @@ pub fn write_int(fd: RawFd, value: i32) -> Result<(), i32> {
     if fd < 0 {
         return Err(-1);
     }
-    let s = c_string_from(format!("{value}"));
+    let Ok(s) = c_string_from(format!("{value}")) else {
+        eprintln!("write_int: invalid value: {value}");
+        return Err(-1);
+    };
     unsafe {
         lseek(fd, 0, SEEK_SET);
         let n = write(fd, s.as_ptr().cast(), s.to_bytes().len());
@@ -134,7 +137,10 @@ pub fn write_str(fd: RawFd, val: &str) -> Result<(), i32> {
     if fd < 0 {
         return Err(-1);
     }
-    let s = c_string_from(val);
+    let Ok(s) = c_string_from(val) else {
+        eprintln!("write_str: invalid value: {val}");
+        return Err(-1);
+    };
     unsafe {
         lseek(fd, 0, SEEK_SET);
         let n = write(fd, s.as_ptr().cast(), s.to_bytes().len());
@@ -148,18 +154,27 @@ pub fn write_str(fd: RawFd, val: &str) -> Result<(), i32> {
 
 /// 向 proc 文件写入整数（open-write-close）
 pub fn write_proc_int(path: &str, value: i32) -> Result<(), i32> {
-    let data = c_string_from(format!("{value}"));
+    let Ok(data) = c_string_from(format!("{value}")) else {
+        eprintln!("write_proc_int: invalid value: {value}");
+        return Err(-1);
+    };
     write_proc_raw(path, data.to_bytes())
 }
 
 /// 向 proc 文件写入字符串（open-write-close）
 pub fn write_proc_str(path: &str, val: &str) -> Result<(), i32> {
-    let data = c_string_from(val);
+    let Ok(data) = c_string_from(val) else {
+        eprintln!("write_proc_str: invalid value: {val}");
+        return Err(-1);
+    };
     write_proc_raw(path, data.to_bytes())
 }
 
 fn write_proc_raw(path: &str, data: &[u8]) -> Result<(), i32> {
-    let c_path = c_string_from(path);
+    let Ok(c_path) = c_string_from(path) else {
+        eprintln!("write_proc_raw: invalid path: {path}");
+        return Err(-1);
+    };
     unsafe {
         let fd = open(c_path.as_ptr(), O_WRONLY | O_TRUNC | O_CLOEXEC);
         if fd < 0 {
@@ -196,7 +211,10 @@ pub fn read_bcc_parms() -> Option<String> {
 /// 临时读取 usb/online 状态 (open-read-close)
 #[must_use]
 pub fn read_usb_online() -> Option<bool> {
-    let c_path = c_string_from(PATH_USB_ONLINE);
+    let Ok(c_path) = c_string_from(PATH_USB_ONLINE) else {
+        eprintln!("read_usb_online: invalid path");
+        return None;
+    };
     unsafe {
         let fd = open(c_path.as_ptr(), O_RDONLY | O_CLOEXEC);
         if fd < 0 {
@@ -229,19 +247,28 @@ pub fn read_ufcs_voters() -> Option<String> {
 /* 内部辅助函数                                                        */
 /* ------------------------------------------------------------------ */
 
-/// 构造 `CString`，路径常量不含 null 字节，调用处可保证安全
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn c_string_from(s: impl Into<Vec<u8>>) -> CString {
-    CString::new(s).expect("unexpected null byte in sysfs/proc path")
+/// 构造 `CString`，路径常量不含 null 字节
+///
+/// # Errors
+///
+/// 当输入包含 null 字节时返回错误。
+fn c_string_from(s: impl Into<Vec<u8>>) -> Result<CString, String> {
+    CString::new(s).map_err(|e| format!("null byte in sysfs/proc path: {e}"))
 }
 
 fn open_ro(path: &str) -> RawFd {
-    let c = c_string_from(path);
+    let Ok(c) = c_string_from(path) else {
+        eprintln!("open_ro: invalid path: {path}");
+        return -1;
+    };
     unsafe { open(c.as_ptr(), O_RDONLY | O_CLOEXEC) }
 }
 
 fn open_wo(path: &str) -> RawFd {
-    let c = c_string_from(path);
+    let Ok(c) = c_string_from(path) else {
+        eprintln!("open_wo: invalid path: {path}");
+        return -1;
+    };
     unsafe { open(c.as_ptr(), O_WRONLY | O_CLOEXEC) }
 }
 
@@ -255,7 +282,10 @@ fn close_fd(fd: &mut RawFd) {
 }
 
 fn read_temp_file(path: &str) -> Option<String> {
-    let c_path = c_string_from(path);
+    let Ok(c_path) = c_string_from(path) else {
+        eprintln!("read_temp_file: invalid path: {path}");
+        return None;
+    };
     unsafe {
         let fd = open(c_path.as_ptr(), O_RDONLY | O_CLOEXEC);
         if fd < 0 {

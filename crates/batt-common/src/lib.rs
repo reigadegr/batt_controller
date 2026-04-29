@@ -5,14 +5,16 @@ use std::time::SystemTime;
 pub const LOG_PATH: &str = "/data/opbatt/battchg.log";
 
 /// 返回格式化时间戳字符串 "[YYYY-MM-DD-HH:MM:SS]"
+#[must_use]
 pub fn get_timestamp() -> String {
     let epoch = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as libc::time_t;
+        .as_secs()
+        .cast_signed();
 
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&epoch, &mut tm) };
+    unsafe { libc::localtime_r(&raw const epoch, &raw mut tm) };
 
     format!(
         "[{:04}-{:02}-{:02}-{:02}:{:02}:{:02}]",

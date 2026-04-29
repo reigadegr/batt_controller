@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_usb = Arc::clone(&state);
     let handle_usb = thread::Builder::new()
         .name("usb_monitor".into())
-        .spawn(move || monitor_usb_thread(state_usb))
+        .spawn(move || monitor_usb_thread(&state_usb))
         .map_err(|e| format!("spawn usb_monitor: {e}"))?;
 
     // Thread 2: 充电控制
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_log = Arc::clone(&state);
     let handle_log = thread::Builder::new()
         .name("battery_log".into())
-        .spawn(move || monitor_battery_log_thread(state_log))
+        .spawn(move || monitor_battery_log_thread(&state_log))
         .map_err(|e| format!("spawn battery_log: {e}"))?;
 
     let _ = handle_usb.join();

@@ -146,13 +146,9 @@ const BATTERY_MODELS: &[BatteryModel] = &[
 /* ------------------------------------------------------------------ */
 
 /// 从短选项字符串中提取首个字符。
-///
-/// # Panics
-///
-/// 当 `s` 为空时 panic。
-#[allow(clippy::expect_used)]
-fn parse_short(s: &str) -> char {
-    s.chars().next().expect("non-empty short flag")
+/// 解析短选项首字符。调用方保证 `s` 非空。
+fn parse_short(s: &str) -> Option<char> {
+    s.chars().next()
 }
 
 /// 解析命令行参数。成功返回 `Ok(CliArgs)`，失败返回 `Err`。
@@ -160,151 +156,166 @@ fn parse_short(s: &str) -> char {
 /// # Errors
 ///
 /// 当遇到未知选项或 `-c`/`-e`/`-P`/`-u`/`-m` 缺少必需参数时返回错误。
-#[allow(
-    clippy::too_many_lines,
-    clippy::match_same_arms,
-    clippy::cast_possible_wrap
-)]
+#[allow(clippy::cast_possible_wrap)]
 pub fn cli_parse() -> Result<CliArgs, String> {
     let raw: Vec<String> = std::env::args().collect();
     let mut args = CliArgs::default();
-    let mut it = raw.iter().enumerate();
+    let mut pos = 1usize; // 跳过 argv[0]
     let mut consumed_any = false;
 
-    // 跳过 argv[0] (程序名)
-    let _ = it.next();
-
-    while let Some((_, item)) = it.next() {
-        // 跳过 "--" 分隔符之后的所有内容
-        if item == "--" {
+    while pos < raw.len() {
+        if raw[pos] == "--" {
             break;
         }
-
-        // 长选项
-        if let Some(long) = item.strip_prefix("--") {
-            match long {
-                "charge" => {
-                    let v = it
-                        .next()
-                        .ok_or("--charge requires <mA>")?
-                        .1
-                        .parse::<i32>()
-                        .map_err(|_| "--charge: invalid integer")?;
-                    args.mode = CliMode::Charge;
-                    args.value = v;
-                }
-                "temp" => args.mode = CliMode::Temp,
-                "soc" => args.mode = CliMode::Soc,
-                "power" => args.mode = CliMode::Power,
-                "enable" => {
-                    let v = it
-                        .next()
-                        .ok_or("--enable requires <0|1>")?
-                        .1
-                        .parse::<i32>()
-                        .map_err(|_| "--enable: invalid integer")?;
-                    args.mode = CliMode::Enable;
-                    args.value = v;
-                }
-                "disable" => {
-                    args.mode = CliMode::Enable;
-                    args.value = 0;
-                }
-                "pps" => {
-                    let v = it
-                        .next()
-                        .ok_or("--pps requires <mA>")?
-                        .1
-                        .parse::<i32>()
-                        .map_err(|_| "--pps: invalid integer")?;
-                    args.mode = CliMode::Pps;
-                    args.value = v;
-                }
-                "ufcs" => {
-                    let v = it
-                        .next()
-                        .ok_or("--ufcs requires <mA>")?
-                        .1
-                        .parse::<i32>()
-                        .map_err(|_| "--ufcs: invalid integer")?;
-                    args.mode = CliMode::Ufcs;
-                    args.value = v;
-                }
-                "log" => args.mode = CliMode::Log,
-                "dumpsys" => args.mode = CliMode::Dumpsys,
-                "model" => {
-                    let m = it.next().ok_or("--model requires <name>")?.1.clone();
-                    args.mode = CliMode::Model;
-                    args.model = m;
-                }
-                "service" => args.mode = CliMode::Service,
-                other => return Err(format!("unknown option: --{other}")),
-            }
-            consumed_any = true;
-            continue;
+        if raw[pos].starts_with("--") {
+            parse_long(&raw, &mut pos, &mut args)?;
+        } else if raw[pos].starts_with('-') {
+            parse_short_opts(&raw, &mut pos, &mut args)?;
         }
-
-        // 短选项 (支持合并: -c500, -S, 等)
-        if item.starts_with('-') && item.len() > 1 {
-            let flag = parse_short(&item[1..]);
-            // 带参数的选项: 如果同一 token 有剩余字符则用之，否则取下一个 token
-            macro_rules! take_arg {
-                () => {{
-                    let rest = &item[2..];
-                    if rest.is_empty() {
-                        it.next().ok_or(format!("{flag} requires an argument"))?.1
-                    } else {
-                        rest
-                    }
-                }};
-            }
-
-            match flag {
-                'c' => {
-                    let arg = take_arg!();
-                    args.mode = CliMode::Charge;
-                    args.value = arg.parse::<i32>().map_err(|_| "-c: invalid integer")?;
-                }
-                't' => args.mode = CliMode::Temp,
-                's' => args.mode = CliMode::Soc,
-                'p' => args.mode = CliMode::Power,
-                'e' => {
-                    let arg = take_arg!();
-                    args.mode = CliMode::Enable;
-                    args.value = arg.parse::<i32>().map_err(|_| "-e: invalid integer")?;
-                }
-                'd' => {
-                    args.mode = CliMode::Enable;
-                    args.value = 0;
-                }
-                'P' => {
-                    let arg = take_arg!();
-                    args.mode = CliMode::Pps;
-                    args.value = arg.parse::<i32>().map_err(|_| "-P: invalid integer")?;
-                }
-                'u' => {
-                    let arg = take_arg!();
-                    args.mode = CliMode::Ufcs;
-                    args.value = arg.parse::<i32>().map_err(|_| "-u: invalid integer")?;
-                }
-                'l' => args.mode = CliMode::Log,
-                'D' => args.mode = CliMode::Dumpsys,
-                'm' => {
-                    let arg = take_arg!().to_owned();
-                    args.mode = CliMode::Model;
-                    args.model = arg;
-                }
-                'S' => args.mode = CliMode::Service,
-                other => return Err(format!("unknown option: -{other}")),
-            }
-            consumed_any = true;
-        }
+        consumed_any = true;
     }
 
     if !consumed_any {
         args.mode = CliMode::Service;
     }
     Ok(args)
+}
+
+/// 从 `raw[pos]` 解析一个长选项，推进 `pos`。
+fn parse_long(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Result<(), String> {
+    let long = &raw[*pos][2..];
+    *pos += 1;
+    match long {
+        "charge" => {
+            let v = next_arg(raw, pos, "--charge")?
+                .parse::<i32>()
+                .map_err(|_| "--charge: invalid integer")?;
+            args.mode = CliMode::Charge;
+            args.value = v;
+        }
+        "temp" => args.mode = CliMode::Temp,
+        "soc" => args.mode = CliMode::Soc,
+        "power" => args.mode = CliMode::Power,
+        "enable" => {
+            let v = next_arg(raw, pos, "--enable")?
+                .parse::<i32>()
+                .map_err(|_| "--enable: invalid integer")?;
+            args.mode = CliMode::Enable;
+            args.value = v;
+        }
+        "disable" => {
+            args.mode = CliMode::Enable;
+            args.value = 0;
+        }
+        "pps" => {
+            let v = next_arg(raw, pos, "--pps")?
+                .parse::<i32>()
+                .map_err(|_| "--pps: invalid integer")?;
+            args.mode = CliMode::Pps;
+            args.value = v;
+        }
+        "ufcs" => {
+            let v = next_arg(raw, pos, "--ufcs")?
+                .parse::<i32>()
+                .map_err(|_| "--ufcs: invalid integer")?;
+            args.mode = CliMode::Ufcs;
+            args.value = v;
+        }
+        "log" => args.mode = CliMode::Log,
+        "dumpsys" => args.mode = CliMode::Dumpsys,
+        "model" => {
+            next_arg(raw, pos, "--model")?.clone_into(&mut args.model);
+            args.mode = CliMode::Model;
+        }
+        "service" => args.mode = CliMode::Service,
+        other => return Err(format!("unknown option: --{other}")),
+    }
+    Ok(())
+}
+
+/// 从 `raw[pos]` 解析短选项（支持合并），推进 `pos`。
+fn parse_short_opts(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Result<(), String> {
+    let item = &raw[*pos];
+    let flag = parse_short(&item[1..]).ok_or("empty short flag")?;
+    // 带参数的选项: 如果同一 token 有剩余字符则用之，否则取下一个 token
+    let arg_str = |pos: &mut usize| -> Result<&str, String> {
+        let rest = &item[2..];
+        if rest.is_empty() {
+            next_arg(raw, pos, &flag.to_string())
+        } else {
+            *pos += 1;
+            Ok(rest)
+        }
+    };
+    match flag {
+        'c' => {
+            args.mode = CliMode::Charge;
+            args.value = arg_str(pos)?
+                .parse::<i32>()
+                .map_err(|_| "-c: invalid integer")?;
+        }
+        't' => {
+            args.mode = CliMode::Temp;
+            *pos += 1;
+        }
+        's' => {
+            args.mode = CliMode::Soc;
+            *pos += 1;
+        }
+        'p' => {
+            args.mode = CliMode::Power;
+            *pos += 1;
+        }
+        'e' => {
+            args.mode = CliMode::Enable;
+            args.value = arg_str(pos)?
+                .parse::<i32>()
+                .map_err(|_| "-e: invalid integer")?;
+        }
+        'd' => {
+            args.mode = CliMode::Enable;
+            args.value = 0;
+            *pos += 1;
+        }
+        'P' => {
+            args.mode = CliMode::Pps;
+            args.value = arg_str(pos)?
+                .parse::<i32>()
+                .map_err(|_| "-P: invalid integer")?;
+        }
+        'u' => {
+            args.mode = CliMode::Ufcs;
+            args.value = arg_str(pos)?
+                .parse::<i32>()
+                .map_err(|_| "-u: invalid integer")?;
+        }
+        'l' => {
+            args.mode = CliMode::Log;
+            *pos += 1;
+        }
+        'D' => {
+            args.mode = CliMode::Dumpsys;
+            *pos += 1;
+        }
+        'm' => {
+            arg_str(pos)?.clone_into(&mut args.model);
+            args.mode = CliMode::Model;
+        }
+        'S' => {
+            args.mode = CliMode::Service;
+            *pos += 1;
+        }
+        other => return Err(format!("unknown option: -{other}")),
+    }
+    Ok(())
+}
+
+/// 取 `raw[pos]` 作为参数值并推进 `pos`。
+fn next_arg<'a>(raw: &'a [String], pos: &mut usize, flag: &str) -> Result<&'a str, String> {
+    *pos += 1;
+    raw.get(*pos - 1)
+        .map(String::as_str)
+        .ok_or_else(|| format!("{flag} requires an argument"))
 }
 
 /* ------------------------------------------------------------------ */
@@ -316,11 +327,7 @@ pub fn cli_parse() -> Result<CliArgs, String> {
 /// # Errors
 ///
 /// 当命令执行失败时返回错误信息。
-#[allow(
-    clippy::too_many_lines,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
 pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
     match args.mode {
         CliMode::Temp => {

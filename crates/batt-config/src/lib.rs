@@ -144,155 +144,99 @@ impl Default for BattConfig {
 }
 
 impl BattConfig {
+    /// 逐行解析 key=value 配置项
+    fn apply_line(&mut self, line: &str) {
+        // 用 let-chain 替代嵌套 if，消除 collapsible_if 警告
+        macro_rules! parse_field {
+            ($key:expr, $field:ident) => {
+                if let Some(v) = extract_value(line, $key)
+                    && let Ok(v) = v.parse()
+                {
+                    self.$field = v;
+                }
+            };
+            ($key:expr, arr $field:ident) => {
+                if let Some(v) = extract_value(line, $key) {
+                    parse_int_array(v, &mut self.$field);
+                }
+            };
+            ($key:expr, arr $field:ident, count $count:ident) => {
+                if let Some(v) = extract_value(line, $key) {
+                    self.$count = parse_int_array(v, &mut self.$field);
+                }
+            };
+        }
+
+        // 数组+计数字段
+        parse_field!("temp_range", arr temp_range, count temp_range_count);
+        parse_field!("temp_curr_offset", arr temp_curr_offset, count temp_curr_offset_count);
+        parse_field!("cv_step_mv", arr cv_step_mv, count cv_step_count);
+        if let Some(v) = extract_value(line, "cv_step_ma") {
+            let ma_count = parse_int_array(v, &mut self.cv_step_ma);
+            if self.cv_step_count > 0 && ma_count < self.cv_step_count {
+                self.cv_step_count = ma_count;
+            }
+        }
+
+        // 数组字段
+        parse_field!("ufcs_soc_mon", arr ufcs_soc_mon);
+        parse_field!("ufcs_interval_ms", arr ufcs_interval_ms);
+        parse_field!("pps_soc_mon", arr pps_soc_mon);
+        parse_field!("pps_interval_ms", arr pps_interval_ms);
+        parse_field!("batt_vol_thr", arr batt_vol_thr);
+        parse_field!("batt_vol_soc", arr batt_vol_soc);
+
+        // 标量字段
+        parse_field!("adjust_step", adjust_step);
+        parse_field!("inc_step", inc_step);
+        parse_field!("dec_step", dec_step);
+        parse_field!("max_ufcs_chg_reset_cc", max_ufcs_chg_reset_cc);
+        parse_field!("ufcs_reset_delay", ufcs_reset_delay);
+        parse_field!("ufcs_max", ufcs_max);
+        parse_field!("pps_max", pps_max);
+        parse_field!("cable_override", cable_override);
+        parse_field!("loop_interval_ms", loop_interval_ms);
+        parse_field!("batt_con_soc", batt_con_soc);
+        parse_field!("rise_quickstep_thr_mv", rise_quickstep_thr_mv);
+        parse_field!("rise_wait_thr_mv", rise_wait_thr_mv);
+        parse_field!("cv_vol_mv", cv_vol_mv);
+        parse_field!("cv_max_ma", cv_max_ma);
+        parse_field!("tc_vol_thr_mv", tc_vol_thr_mv);
+        parse_field!("tc_thr_soc", tc_thr_soc);
+        parse_field!("tc_full_ma", tc_full_ma);
+        parse_field!("tc_vol_full_mv", tc_vol_full_mv);
+        parse_field!("curr_inc_wait_cycles", curr_inc_wait_cycles);
+        parse_field!("batt_full_thr_mv", batt_full_thr_mv);
+        parse_field!("restart_rise_step", restart_rise_step);
+        parse_field!("depol_pulse_ma", depol_pulse_ma);
+        parse_field!("depol_zero_ma", depol_zero_ma);
+        parse_field!("depol_neg_step", depol_neg_step);
+        parse_field!("enabled", enabled);
+    }
+
     /// 解析配置文件（key=value 格式），未覆盖的字段填充默认值
     pub fn parse(path: &str) -> Result<Self, std::io::Error> {
         let content = std::fs::read_to_string(path)?;
-        let mut cfg = Self::default();
-
         // 硬编码默认值（对应 C 代码 config_parse 前半段）
-        cfg.enabled = 1;
-        cfg.adjust_step = 50;
-        cfg.inc_step = 100;
-        cfg.loop_interval_ms = 2000;
-        cfg.restart_rise_step = 50;
-        cfg.depol_pulse_ma = 500;
-        cfg.depol_zero_ma = 0;
-        cfg.depol_neg_step = 150;
-        cfg.ufcs_soc_mon = [20, 60];
-        cfg.ufcs_interval_ms = [450, 650];
+        let mut cfg = Self {
+            enabled: 1,
+            adjust_step: 50,
+            inc_step: 100,
+            loop_interval_ms: 2000,
+            restart_rise_step: 50,
+            depol_pulse_ma: 500,
+            depol_neg_step: 150,
+            ufcs_soc_mon: [20, 60],
+            ufcs_interval_ms: [450, 650],
+            ..Default::default()
+        };
 
         for line in content.lines() {
-            let line = line.trim_end_matches('\r');
-            let line = line.trim();
-
+            let line = line.trim_end_matches('\r').trim();
             if line.is_empty() {
                 continue;
             }
-
-            if let Some(v) = extract_value(line, "temp_range") {
-                cfg.temp_range_count = parse_int_array(v, &mut cfg.temp_range);
-            } else if let Some(v) = extract_value(line, "temp_curr_offset") {
-                cfg.temp_curr_offset_count = parse_int_array(v, &mut cfg.temp_curr_offset);
-            } else if let Some(v) = extract_value(line, "adjust_step") {
-                if let Ok(v) = v.parse() {
-                    cfg.adjust_step = v;
-                }
-            } else if let Some(v) = extract_value(line, "inc_step") {
-                if let Ok(v) = v.parse() {
-                    cfg.inc_step = v;
-                }
-            } else if let Some(v) = extract_value(line, "dec_step") {
-                if let Ok(v) = v.parse() {
-                    cfg.dec_step = v;
-                }
-            } else if let Some(v) = extract_value(line, "max_ufcs_chg_reset_cc") {
-                if let Ok(v) = v.parse() {
-                    cfg.max_ufcs_chg_reset_cc = v;
-                }
-            } else if let Some(v) = extract_value(line, "ufcs_reset_delay") {
-                if let Ok(v) = v.parse() {
-                    cfg.ufcs_reset_delay = v;
-                }
-            } else if let Some(v) = extract_value(line, "ufcs_max") {
-                if let Ok(v) = v.parse() {
-                    cfg.ufcs_max = v;
-                }
-            } else if let Some(v) = extract_value(line, "pps_max") {
-                if let Ok(v) = v.parse() {
-                    cfg.pps_max = v;
-                }
-            } else if let Some(v) = extract_value(line, "cable_override") {
-                if let Ok(v) = v.parse() {
-                    cfg.cable_override = v;
-                }
-            } else if let Some(v) = extract_value(line, "ufcs_soc_mon") {
-                parse_int_array(v, &mut cfg.ufcs_soc_mon);
-            } else if let Some(v) = extract_value(line, "ufcs_interval_ms") {
-                parse_int_array(v, &mut cfg.ufcs_interval_ms);
-            } else if let Some(v) = extract_value(line, "pps_soc_mon") {
-                parse_int_array(v, &mut cfg.pps_soc_mon);
-            } else if let Some(v) = extract_value(line, "pps_interval_ms") {
-                parse_int_array(v, &mut cfg.pps_interval_ms);
-            } else if let Some(v) = extract_value(line, "loop_interval_ms") {
-                if let Ok(v) = v.parse() {
-                    cfg.loop_interval_ms = v;
-                }
-            } else if let Some(v) = extract_value(line, "batt_vol_thr") {
-                parse_int_array(v, &mut cfg.batt_vol_thr);
-            } else if let Some(v) = extract_value(line, "batt_vol_soc") {
-                parse_int_array(v, &mut cfg.batt_vol_soc);
-            } else if let Some(v) = extract_value(line, "batt_con_soc") {
-                if let Ok(v) = v.parse() {
-                    cfg.batt_con_soc = v;
-                }
-            } else if let Some(v) = extract_value(line, "rise_quickstep_thr_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.rise_quickstep_thr_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "rise_wait_thr_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.rise_wait_thr_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "cv_vol_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.cv_vol_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "cv_max_ma") {
-                if let Ok(v) = v.parse() {
-                    cfg.cv_max_ma = v;
-                }
-            } else if let Some(v) = extract_value(line, "cv_step_mv") {
-                cfg.cv_step_count = parse_int_array(v, &mut cfg.cv_step_mv);
-            } else if let Some(v) = extract_value(line, "cv_step_ma") {
-                let ma_count = parse_int_array(v, &mut cfg.cv_step_ma);
-                if cfg.cv_step_count > 0 && ma_count < cfg.cv_step_count {
-                    cfg.cv_step_count = ma_count;
-                }
-            } else if let Some(v) = extract_value(line, "tc_vol_thr_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.tc_vol_thr_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "tc_thr_soc") {
-                if let Ok(v) = v.parse() {
-                    cfg.tc_thr_soc = v;
-                }
-            } else if let Some(v) = extract_value(line, "tc_full_ma") {
-                if let Ok(v) = v.parse() {
-                    cfg.tc_full_ma = v;
-                }
-            } else if let Some(v) = extract_value(line, "tc_vol_full_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.tc_vol_full_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "curr_inc_wait_cycles") {
-                if let Ok(v) = v.parse() {
-                    cfg.curr_inc_wait_cycles = v;
-                }
-            } else if let Some(v) = extract_value(line, "batt_full_thr_mv") {
-                if let Ok(v) = v.parse() {
-                    cfg.batt_full_thr_mv = v;
-                }
-            } else if let Some(v) = extract_value(line, "restart_rise_step") {
-                if let Ok(v) = v.parse() {
-                    cfg.restart_rise_step = v;
-                }
-            } else if let Some(v) = extract_value(line, "depol_pulse_ma") {
-                if let Ok(v) = v.parse() {
-                    cfg.depol_pulse_ma = v;
-                }
-            } else if let Some(v) = extract_value(line, "depol_zero_ma") {
-                if let Ok(v) = v.parse() {
-                    cfg.depol_zero_ma = v;
-                }
-            } else if let Some(v) = extract_value(line, "depol_neg_step") {
-                if let Ok(v) = v.parse() {
-                    cfg.depol_neg_step = v;
-                }
-            } else if let Some(v) = extract_value(line, "enabled") {
-                if let Ok(v) = v.parse() {
-                    cfg.enabled = v;
-                }
-            }
+            cfg.apply_line(line);
         }
 
         // 补全未在配置文件中指定的字段默认值（对应 C 代码 config_parse 后半段）

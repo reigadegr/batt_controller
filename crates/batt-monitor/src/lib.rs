@@ -36,6 +36,7 @@ pub struct SharedState {
 }
 
 impl SharedState {
+    #[must_use]
     pub fn new(config: BattConfig) -> Self {
         Self {
             usb_online: AtomicBool::new(false),
@@ -63,10 +64,7 @@ pub fn parse_battery_log(buf: &str) -> BatteryLog {
 
     for token in s.split(',').take(20) {
         // 截断到换行符
-        let token = match token.find('\n') {
-            Some(pos) => &token[..pos],
-            None => token,
-        };
+        let token = token.find('\n').map_or(token, |pos| &token[..pos]);
         if let Ok(v) = token.trim().parse::<i32>() {
             fields[count] = v;
             count += 1;
@@ -97,7 +95,7 @@ pub fn parse_battery_log(buf: &str) -> BatteryLog {
 /* 每 2s 轮询 usb/online，设置 usb_online 和 charging_active           */
 /* ------------------------------------------------------------------ */
 
-pub fn monitor_usb_thread(state: Arc<SharedState>) {
+pub fn monitor_usb_thread(state: &Arc<SharedState>) {
     let mut prev_online = false;
 
     while state.running.load(Ordering::Relaxed) {
@@ -121,13 +119,16 @@ pub fn monitor_usb_thread(state: Arc<SharedState>) {
 /* 每 5s 读取 battery_log_content 并解析                                */
 /* ------------------------------------------------------------------ */
 
-pub fn monitor_battery_log_thread(state: Arc<SharedState>) {
+pub fn monitor_battery_log_thread(state: &Arc<SharedState>) {
     while state.running.load(Ordering::Relaxed) {
-        if state.usb_online.load(Ordering::Relaxed) {
-            if let Some(buf) = read_battery_log() {
-                let blog = parse_battery_log(&buf);
-                *state.blog.lock().unwrap_or_else(|e| e.into_inner()) = blog;
-            }
+        if state.usb_online.load(Ordering::Relaxed)
+            && let Some(buf) = read_battery_log()
+        {
+            let blog = parse_battery_log(&buf);
+            *state
+                .blog
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = blog;
         }
 
         thread::sleep(Duration::from_secs(5));
