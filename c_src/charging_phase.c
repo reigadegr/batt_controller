@@ -63,6 +63,7 @@ int handle_cycle_end(LoopCtx *c, char *log_buf)
     c->ramp_idx = 0;
     c->cv_step_idx = 0;
     c->cv_holding = 0;
+    c->rise_max_reached = 0;
     c->in_charge_cycle = 0;
     c->phase = PHASE_RESTART_RISE;
     return 1;
@@ -117,6 +118,9 @@ void exec_rise(LoopCtx *c)
             if (c->current_ma > phase_max)
                 c->current_ma = phase_max;
             write_current(c->fds, c->use_ufcs, c->current_ma);
+        } else {
+            /* strace 确认: 到达 phase_max 后停止写 force_val */
+            c->rise_max_reached = 1;
         }
         return;
     }
@@ -154,8 +158,11 @@ void exec_rise(LoopCtx *c)
         return;
     }
 
-    if (c->current_ma >= phase_max)
+    if (c->current_ma >= phase_max) {
+        /* strace 确认: 到达 phase_max 后停止写 force_val，静默维持 */
+        c->rise_max_reached = 1;
         return;
+    }
 
     int step;
     if (c->ramp_idx >= 1 && c->ramp_idx <= 4) {
@@ -334,4 +341,5 @@ void exec_depol(LoopCtx *c)
     c->ramp_idx = 0;
     c->cv_step_idx = 0;
     c->cv_holding = 0;
+    c->rise_max_reached = 0;
 }

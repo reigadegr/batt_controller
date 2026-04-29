@@ -30,6 +30,7 @@ typedef struct {
     int cv_step_idx;
     int cv_holding;
     int effective_max;
+    int rise_max_reached;  /* RISE 阶段到达 phase_max 后置 1, 静默维持 */
 
     /* 临时数据 */
     BccParms parms;

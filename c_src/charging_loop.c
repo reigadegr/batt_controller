@@ -78,7 +78,9 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
             break;
         case PHASE_RISE:
         case PHASE_RESTART_RISE:
-            exec_rise(&c);
+            /* strace 确认: 到达 phase_max 后静默维持，不写 force_val */
+            if (!c.rise_max_reached)
+                exec_rise(&c);
             break;
         case PHASE_CV:
             exec_cv(&c);
