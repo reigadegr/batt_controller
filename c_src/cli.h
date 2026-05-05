@@ -16,6 +16,8 @@ typedef enum {
     CLI_MODE_UFCS,          /* -u <mA>: 强制 UFCS 电流 */
     CLI_MODE_LOG,           /* -l: 抓取内核充电日志 */
     CLI_MODE_DUMPSYS,       /* -D: dumpsys 电池控制 */
+    CLI_MODE_DUMPSYS_SET_AC,    /* -A: dumpsys battery set ac 1 */
+    CLI_MODE_DUMPSYS_SET_STATUS, /* -T: dumpsys battery set status 2 */
     CLI_MODE_MODEL,         /* -m <name>: 查询电池型号 */
 } CliMode;
 

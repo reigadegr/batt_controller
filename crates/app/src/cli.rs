@@ -1,4 +1,4 @@
-use batt_charging::{dumpsys_reset, run as charging_loop};
+use batt_charging::{dumpsys_reset, dumpsys_set_ac, dumpsys_set_status, run as charging_loop};
 use batt_config::BattConfig;
 use batt_sysfs::{SysfsFds, read_int, write_int, write_proc_int, write_proc_str};
 
@@ -28,6 +28,10 @@ pub enum CliMode {
     Log,
     /// `-D`: dumpsys 电池控制
     Dumpsys,
+    /// `-A`: dumpsys battery set ac 1
+    DumpsysSetAc,
+    /// `-T`: dumpsys battery set status 2
+    DumpsysSetStatus,
     /// `-m <name>`: 查询电池型号
     Model,
 }
@@ -223,6 +227,8 @@ fn parse_long(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Result<(),
         }
         "log" => args.mode = CliMode::Log,
         "dumpsys" => args.mode = CliMode::Dumpsys,
+        "set-ac" => args.mode = CliMode::DumpsysSetAc,
+        "set-status" => args.mode = CliMode::DumpsysSetStatus,
         "model" => {
             next_arg(raw, pos, "--model")?.clone_into(&mut args.model);
             args.mode = CliMode::Model;
@@ -295,6 +301,14 @@ fn parse_short_opts(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Resu
         }
         'D' => {
             args.mode = CliMode::Dumpsys;
+            *pos += 1;
+        }
+        'A' => {
+            args.mode = CliMode::DumpsysSetAc;
+            *pos += 1;
+        }
+        'T' => {
+            args.mode = CliMode::DumpsysSetStatus;
             *pos += 1;
         }
         'm' => {
@@ -393,6 +407,14 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
         CliMode::Dumpsys => {
             dumpsys_reset();
             println!("dumpsys battery reset sequence complete");
+        }
+        CliMode::DumpsysSetAc => {
+            dumpsys_set_ac();
+            println!("dumpsys battery set ac 1");
+        }
+        CliMode::DumpsysSetStatus => {
+            dumpsys_set_status();
+            println!("dumpsys battery set status 2");
         }
         CliMode::Model => {
             if let Some(i) = BATTERY_MODELS.iter().position(|m| m.name == args.model) {

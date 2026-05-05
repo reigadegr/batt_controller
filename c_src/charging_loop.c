@@ -22,6 +22,10 @@ void charging_loop(SysfsFds *fds, const BattConfig *cfg, volatile int *running)
     /* ---- 阶段 2: 重置 votable ---- */
     sysfs_reset_votables();
 
+    /* ---- 阶段 3: 设置电池状态为充电中 ---- */
+    charging_dumpsys_set_ac(fds);
+    charging_dumpsys_set_status(fds);
+
     read_voters_3x(log_buf, sizeof(log_buf), &c.voters);
 
     c.cable_max = c.voters.cable_max_ma;

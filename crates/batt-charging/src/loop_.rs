@@ -8,7 +8,8 @@ use batt_sysfs::{self, SysfsFds};
 
 use crate::ChargePhase;
 use crate::charging::{
-    clamp_max_ma, next_phase, parse_bcc_parms, phase_name, read_voters_3x, write_current,
+    clamp_max_ma, dumpsys_set_ac, dumpsys_set_status, next_phase, parse_bcc_parms, phase_name,
+    read_voters_3x, write_current,
 };
 use crate::phase::{calc_effective_max, exec_cv, exec_depol, exec_rise, exec_tc, handle_cycle_end};
 
@@ -76,6 +77,10 @@ pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &AtomicBool) {
 
     // ---- 阶段 2: 重置 votable ----
     batt_sysfs::reset_votables();
+
+    // ---- 阶段 3: 设置电池状态为充电中 ----
+    dumpsys_set_ac();
+    dumpsys_set_status();
 
     read_voters_3x(&mut c.voters);
 

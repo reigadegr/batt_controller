@@ -91,6 +91,18 @@ int charging_parse_ufcs_voters(const char *status, UfcsVoters *voters);
 void charging_dumpsys_reset(SysfsFds *fds);
 
 /*
+ * 设置 AC 电源充电模式
+ * 执行: dumpsys battery set ac 1
+ */
+void charging_dumpsys_set_ac(SysfsFds *fds);
+
+/*
+ * 设置电池状态为充电中
+ * 执行: dumpsys battery set status 2
+ */
+void charging_dumpsys_set_status(SysfsFds *fds);
+
+/*
  * 充电控制主循环 (在子线程中运行)
  * fds: 已打开的 sysfs fd 集合
  * cfg: 配置

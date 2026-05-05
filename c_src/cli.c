@@ -45,6 +45,8 @@ static struct option long_options[] = {
     {"ufcs",     required_argument, NULL, 'u'},
     {"log",      no_argument,       NULL, 'l'},
     {"dumpsys",  no_argument,       NULL, 'D'},
+    {"set-ac",   no_argument,       NULL, 'A'},
+    {"set-status", no_argument,     NULL, 'T'},
     {"model",    required_argument, NULL, 'm'},
     {"service",  no_argument,       NULL, 'S'},
     {NULL,       0,                 NULL, 0},
@@ -56,7 +58,7 @@ int cli_parse(int argc, char **argv, CliArgs *args)
     args->mode = CLI_MODE_SERVICE;
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:tsp:e:dP:u:lDm:S", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:tsp:e:dP:u:lDATm:S", long_options, NULL)) != -1) {
         switch (opt) {
         case 'c':
             args->mode = CLI_MODE_CHARGE;
@@ -92,6 +94,12 @@ int cli_parse(int argc, char **argv, CliArgs *args)
             break;
         case 'D':
             args->mode = CLI_MODE_DUMPSYS;
+            break;
+        case 'A':
+            args->mode = CLI_MODE_DUMPSYS_SET_AC;
+            break;
+        case 'T':
+            args->mode = CLI_MODE_DUMPSYS_SET_STATUS;
             break;
         case 'm':
             args->mode = CLI_MODE_MODEL;
@@ -209,6 +217,20 @@ int cli_exec(const CliArgs *args, const BattConfig *cfg)
         if (sysfs_open_all(&fds) < 0) return -1;
         charging_dumpsys_reset(&fds);
         printf("dumpsys battery reset sequence complete\n");
+        sysfs_close_all(&fds);
+        return 0;
+    }
+    case CLI_MODE_DUMPSYS_SET_AC: {
+        if (sysfs_open_all(&fds) < 0) return -1;
+        charging_dumpsys_set_ac(&fds);
+        printf("dumpsys battery set ac 1\n");
+        sysfs_close_all(&fds);
+        return 0;
+    }
+    case CLI_MODE_DUMPSYS_SET_STATUS: {
+        if (sysfs_open_all(&fds) < 0) return -1;
+        charging_dumpsys_set_status(&fds);
+        printf("dumpsys battery set status 2\n");
         sysfs_close_all(&fds);
         return 0;
     }

@@ -13,6 +13,8 @@ mod loop_;
 mod phase;
 
 pub use charging::dumpsys_reset;
+pub use charging::dumpsys_set_ac;
+pub use charging::dumpsys_set_status;
 pub use loop_::run;
 
 /// 充电阶段

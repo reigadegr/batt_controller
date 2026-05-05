@@ -120,6 +120,18 @@ void charging_dumpsys_reset(SysfsFds *fds)
     run_dumpsys("reset", NULL, NULL);
 }
 
+void charging_dumpsys_set_ac(SysfsFds *fds)
+{
+    (void)fds;
+    run_dumpsys("set", "ac", "1");
+}
+
+void charging_dumpsys_set_status(SysfsFds *fds)
+{
+    (void)fds;
+    run_dumpsys("set", "status", "2");
+}
+
 int choose_protocol(const BattConfig *cfg, const BccParms *parms)
 {
     if (cfg->cable_override)

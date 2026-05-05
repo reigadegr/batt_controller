@@ -124,6 +124,28 @@ pub fn dumpsys_reset() {
     let _ = Command::new("dumpsys").arg("battery").arg("reset").status();
 }
 
+/// 执行 dumpsys battery set ac 1
+/// 设置 AC 电源充电模式
+pub fn dumpsys_set_ac() {
+    let _ = Command::new("dumpsys")
+        .arg("battery")
+        .arg("set")
+        .arg("ac")
+        .arg("1")
+        .status();
+}
+
+/// 执行 dumpsys battery set status 2
+/// 设置电池状态为充电中
+pub fn dumpsys_set_status() {
+    let _ = Command::new("dumpsys")
+        .arg("battery")
+        .arg("set")
+        .arg("status")
+        .arg("2")
+        .status();
+}
+
 /// 选择充电协议: 1=UFCS, 0=PPS
 #[must_use]
 pub const fn choose_protocol(cfg: &BattConfig, parms: &BccParms) -> i32 {
