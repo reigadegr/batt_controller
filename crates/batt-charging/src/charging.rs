@@ -275,7 +275,7 @@ pub fn next_phase(
             ChargePhase::Tc
         }
 
-        ChargePhase::Depol => ChargePhase::RestartRise,
+        ChargePhase::Depol => ChargePhase::Full,
 
         ChargePhase::Full => ChargePhase::Full,
     }

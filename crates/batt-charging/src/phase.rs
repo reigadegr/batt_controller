@@ -20,7 +20,7 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
         c.in_charge_cycle = 1;
     }
 
-    if c.parms.thermal_hi > 20 || c.in_charge_cycle == 0 || c.current_ma > 100 {
+    if c.parms.thermal_hi > 20 || c.in_charge_cycle == 0 {
         return false;
     }
 
@@ -109,7 +109,7 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
     true
 }
 
-/// 计算 `effective_max（温控` + `thermal_hi` + `STEP_VOTER` 限流）
+/// 计算 `effective_max`（温控 + `thermal_hi` + 所有 Voter 取最小值）
 pub fn calc_effective_max(c: &mut LoopCtx<'_>) {
     let temp_offset = get_temp_curr_offset(c.cfg, c.parms.temp_01c);
     c.effective_max = c.max_ma;
@@ -140,6 +140,21 @@ pub fn calc_effective_max(c: &mut LoopCtx<'_>) {
     // STEP_VOTER 限流: strace 确认 STEP_VOTER 从 9100 变为 8000
     if c.voters.step_ma > 0 && c.voters.step_ma < c.effective_max {
         c.effective_max = c.voters.step_ma;
+    }
+
+    // 所有 Voter 取最小值: LIMIT_FCL / IMP / ADAPTER_IMAX / BASE_MAX / IC / BATT_TEMP / COOL_DOWN
+    for &voter in &[
+        c.voters.limit_fcl_ma,
+        c.voters.imp_ma,
+        c.voters.adapter_imax_ma,
+        c.voters.base_max_ma,
+        c.voters.ic_ma,
+        c.voters.batt_temp_ma,
+        c.voters.cool_down_ma,
+    ] {
+        if voter > 0 && voter < c.effective_max {
+            c.effective_max = voter;
+        }
     }
 }
 
@@ -308,7 +323,13 @@ fn exec_cv_inner(c: &mut LoopCtx<'_>, step_mv: &[i32], step_ma: &[i32], step_cou
     }
 }
 
-/// TC 涓流阶段
+fn sleep_or_stop(c: &LoopCtx<'_>, ms: u64) -> bool {
+    if !c.running.load(Ordering::Relaxed) {
+        return false;
+    }
+    thread::sleep(Duration::from_millis(ms));
+    true
+}
 pub fn exec_tc(c: &mut LoopCtx<'_>) {
     let mut cap = if c.cfg.tc_full_ma > 0 {
         c.cfg.tc_full_ma
@@ -350,44 +371,41 @@ pub fn exec_depol(c: &mut LoopCtx<'_>) {
 
     // Round 1: 50 → 初始负值 → 脉冲下降至 0
     write_current(c.fds, c.use_ufcs, 50);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, -(neg_step * 2 / 3));
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
 
     write_current(c.fds, c.use_ufcs, pulse);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 300);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 250);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 50);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 0);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
 
     // Round 2: 负值递减 + 脉冲下降
     let mut neg = -50;
     for _ in 0..3 {
-        if !c.running.load(Ordering::Relaxed) {
-            break;
-        }
+        if !sleep_or_stop(c, 500) { return; }
         write_current(c.fds, c.use_ufcs, neg);
-        thread::sleep(Duration::from_millis(500));
         neg -= neg_step;
     }
 
     write_current(c.fds, c.use_ufcs, pulse);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 300);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 250);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 50);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
 
     // strace 确认: DEPOL 结束后写 1000 进入 FULL
     write_current(c.fds, c.use_ufcs, 1000);
-    thread::sleep(Duration::from_millis(500));
+    if !sleep_or_stop(c, 500) { return; }
 
     let ts = get_timestamp();
     log_write(&format!(
