@@ -65,10 +65,8 @@ pub fn parse_battery_log(buf: &str) -> BatteryLog {
     for token in s.split(',').take(20) {
         // 截断到换行符
         let token = token.find('\n').map_or(token, |pos| &token[..pos]);
-        if let Ok(v) = token.trim().parse::<i32>() {
-            fields[count] = v;
-            count += 1;
-        }
+        fields[count] = token.trim().parse::<i32>().unwrap_or(0);
+        count += 1;
     }
 
     let mut blog = BatteryLog::default();

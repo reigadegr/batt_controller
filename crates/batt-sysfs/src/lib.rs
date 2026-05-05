@@ -94,28 +94,6 @@ pub fn read_int(fd: RawFd) -> Option<i32> {
     }
 }
 
-/// 读取字符串（lseek 到开头再读）
-#[must_use]
-pub fn read_str(fd: RawFd) -> Option<String> {
-    if fd < 0 {
-        return None;
-    }
-    unsafe {
-        lseek(fd, 0, SEEK_SET);
-        let mut buf = [0u8; 512];
-        let n = read(fd, buf.as_mut_ptr().cast(), buf.len() - 1);
-        if n <= 0 {
-            return None;
-        }
-        buf[n.cast_unsigned()] = 0;
-        Some(
-            std::ffi::CStr::from_ptr(buf.as_ptr().cast())
-                .to_string_lossy()
-                .into_owned(),
-        )
-    }
-}
-
 /// 写入整数（仅用于 sysfs fd）
 pub fn write_int(fd: RawFd, value: i32) -> Result<(), i32> {
     if fd < 0 {

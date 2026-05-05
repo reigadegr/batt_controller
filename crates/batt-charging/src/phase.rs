@@ -7,7 +7,7 @@ use batt_config::CV_STEP_MAX;
 
 use crate::ChargePhase;
 use crate::charging::{
-    choose_protocol, clamp_max_ma, dumpsys_reset, get_default_cv_steps, get_temp_curr_offset,
+    choose_protocol, clamp_max_ma, dumpsys_reset, get_temp_curr_offset,
     read_voters_3x, write_current,
 };
 use crate::loop_::LoopCtx;
@@ -54,7 +54,7 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
         } else {
             450
         };
-        for _ in 0..delay * (1000 / delay_ms) {
+        for _ in 0..(delay * 1000).div_euclid(delay_ms) {
             if !c.running.load(Ordering::Relaxed) {
                 break;
             }
@@ -258,17 +258,17 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
 
 /// CV 恒压阶段: 阶梯降流
 pub fn exec_cv(c: &mut LoopCtx<'_>) {
-    // 确定 CV 阶梯表: 有配置用配置, 无配置用内置默认
     if c.cfg.cv_step_count > 0 {
         let count = c.cfg.cv_step_count.min(CV_STEP_MAX);
         let step_mv = &c.cfg.cv_step_mv[..count];
         let step_ma = &c.cfg.cv_step_ma[..count];
         exec_cv_inner(c, step_mv, step_ma, count);
     } else {
-        let default_steps = get_default_cv_steps(c.effective_max);
-        let def_mv: Vec<i32> = default_steps.iter().map(|s| s.mv).collect();
-        let def_ma: Vec<i32> = default_steps.iter().map(|s| s.ma).collect();
-        exec_cv_inner(c, &def_mv, &def_ma, default_steps.len());
+        let half = (c.effective_max + 1) / 2;
+        let half = ((half + 25) / 50) * 50;
+        let def_mv = [4450_i32, 4480, 4500, 4520];
+        let def_ma = [half, 1000, 500, 200];
+        exec_cv_inner(c, &def_mv, &def_ma, def_mv.len());
     }
 }
 
@@ -383,7 +383,7 @@ pub fn exec_depol(c: &mut LoopCtx<'_>) {
     if !sleep_or_stop(c, 500) { return; }
     write_current(c.fds, c.use_ufcs, 50);
     if !sleep_or_stop(c, 500) { return; }
-    write_current(c.fds, c.use_ufcs, 0);
+    write_current(c.fds, c.use_ufcs, c.cfg.depol_zero_ma);
     if !sleep_or_stop(c, 500) { return; }
 
     // Round 2: 负值递减 + 脉冲下降

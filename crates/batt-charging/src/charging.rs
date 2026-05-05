@@ -275,29 +275,7 @@ pub fn next_phase(
             ChargePhase::Tc
         }
 
-        ChargePhase::Depol => ChargePhase::Full,
-
-        ChargePhase::Full => ChargePhase::Full,
+        ChargePhase::Depol | ChargePhase::Full => ChargePhase::Full,
     }
 }
 
-/// CV 阶梯表条目: (电压阈值 mV, 目标电流 mA)
-pub struct CvStep {
-    pub mv: i32,
-    pub ma: i32,
-}
-
-/// 获取默认 CV 降流阶梯配置（基于锂电池物理特性）
-/// `effective_max`: 当前有效最大电流 (mA), 用于计算 50% 比例档
-#[must_use]
-pub fn get_default_cv_steps(effective_max: i32) -> Vec<CvStep> {
-    let mut half = (effective_max + 1) / 2;
-    half = ((half + 25) / 50) * 50; // 对齐 50mA
-
-    vec![
-        CvStep { mv: 4450, ma: half },
-        CvStep { mv: 4480, ma: 1000 },
-        CvStep { mv: 4500, ma: 500 },
-        CvStep { mv: 4520, ma: 200 },
-    ]
-}
