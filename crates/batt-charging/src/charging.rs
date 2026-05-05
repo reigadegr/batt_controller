@@ -278,4 +278,3 @@ pub fn next_phase(
         ChargePhase::Depol | ChargePhase::Full => ChargePhase::Full,
     }
 }
-
