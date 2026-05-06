@@ -2,11 +2,20 @@
 
 本项目为逆向项目，目标源文件为tmp/opbatt_control
 
-当前为c语言实现，后续会迁移到Rust
-
-c语言的源码在c_src下
+当前已使用 Rust 语言实现，采用 workspace 结构组织代码
 
 任何有关加密混淆保护的东西本项目不需要理会，要做一个免费开源且更好用的充电控制工具
+
+## 项目结构
+
+本项目采用 Rust workspace 组织，包含以下 crate：
+
+- **app** - 主程序入口
+- **batt-common** - 通用工具和基础设施
+- **batt-config** - 配置管理
+- **batt-charging** - 充电控制逻辑
+- **batt-monitor** - 电池监控
+- **batt-sysfs** - sysfs 接口封装
 
 ## 逆向工具
 
