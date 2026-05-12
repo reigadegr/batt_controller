@@ -2,8 +2,7 @@ use std::process::Command;
 
 use batt_config::BattConfig;
 use batt_sysfs::{
-    self, PROC_PPS_FORCE_ACTIVE, PROC_PPS_FORCE_VAL, PROC_UFCS_FORCE_ACTIVE, PROC_UFCS_FORCE_VAL,
-    SysfsFds,
+    PROC_PPS_FORCE_ACTIVE, PROC_PPS_FORCE_VAL, PROC_UFCS_FORCE_ACTIVE, PROC_UFCS_FORCE_VAL,
 };
 
 use crate::{BccParms, ChargePhase, UfcsVoters};
@@ -62,20 +61,24 @@ pub fn parse_bcc_parms(str_data: &str, parms: &mut BccParms) -> Result<(), ()> {
 }
 
 /// 从 voter status 字符串中提取指定 tag 的 `v=` 值
+///
+/// 按行匹配，避免子串误匹配（如 `MAX_VOTER:` 匹配到 `CABLE_MAX_VOTER:`）。
 fn extract_voter_int(status: &str, tag: &str) -> i32 {
-    if let Some(pos) = status.find(tag) {
-        let rest = &status[pos..];
-        if let Some(vpos) = rest.find("v=") {
-            let val_str = &rest[vpos + 2..];
-            // 解析到第一个非数字字符（跳过负号开头的数字）
-            let end = val_str
-                .char_indices()
-                .skip_while(|&(_, c)| c == '-')
-                .find(|&(_, c)| !c.is_ascii_digit())
-                .map_or(val_str.len(), |(i, _)| i);
-            if end > 0 {
-                return val_str[..end].parse().unwrap_or(0);
-            }
+    for line in status.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix(tag) else {
+            continue;
+        };
+        let Some(vpos) = rest.find("v=") else {
+            continue;
+        };
+        let val_str = &rest[vpos + 2..];
+        let end = val_str
+            .bytes()
+            .position(|b| !(b.is_ascii_digit() || b == b'-'))
+            .unwrap_or(val_str.len());
+        if end > 0 {
+            return val_str[..end].parse().unwrap_or(0);
         }
     }
     0
@@ -180,8 +183,7 @@ pub fn get_temp_curr_offset(cfg: &BattConfig, temp_01c: i32) -> i32 {
 /// # Errors
 ///
 /// 当 sysfs 写入失败时返回错误。
-pub fn write_current(fds: &SysfsFds, use_ufcs: i32, ma: i32) -> Result<(), i32> {
-    let _ = fds; // fds 参数保留以匹配调用签名，当前 sysfs 写入不依赖 fds
+pub fn write_current(use_ufcs: i32, ma: i32) -> Result<(), i32> {
     if use_ufcs != 0 {
         batt_sysfs::write_proc_int(PROC_UFCS_FORCE_VAL, ma)?;
         batt_sysfs::write_proc_str(PROC_UFCS_FORCE_ACTIVE, "1")?;
@@ -195,14 +197,17 @@ pub fn write_current(fds: &SysfsFds, use_ufcs: i32, ma: i32) -> Result<(), i32> 
 /// 取三者最小正值（忽略 0 和负值）
 #[must_use]
 pub const fn clamp_max_ma(cfg_max: i32, proto_max: i32, cable_max: i32) -> i32 {
-    let mut m = cfg_max;
+    let mut m = i32::MAX;
+    if cfg_max > 0 && cfg_max < m {
+        m = cfg_max;
+    }
     if proto_max > 0 && proto_max < m {
         m = proto_max;
     }
     if cable_max > 0 && cable_max < m {
         m = cable_max;
     }
-    m
+    if m == i32::MAX { 0 } else { m }
 }
 
 /// 获取阶段名称

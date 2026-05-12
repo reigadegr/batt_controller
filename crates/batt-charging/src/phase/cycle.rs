@@ -55,7 +55,10 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
         } else {
             DEFAULT_LOOP_INTERVAL_MS
         };
-        for _ in 0..(delay * 1000).div_euclid(delay_ms) {
+        // SAFETY: .max(0) 保证非负, 充电配置值不会超出 u32 范围
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let iterations = (i64::from(delay) * 1000 / i64::from(delay_ms)).max(0) as u32;
+        for _ in 0..iterations {
             if !c.running.load(Ordering::Relaxed) {
                 break;
             }

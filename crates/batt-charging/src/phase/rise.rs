@@ -23,7 +23,7 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
             if c.current_ma > phase_max {
                 c.current_ma = phase_max;
             }
-            let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+            let _ = write_current(c.use_ufcs, c.current_ma);
         } else {
             // strace 确认: 到达 phase_max 后停止写 force_val
             c.rise_max_reached = 1;
@@ -38,7 +38,7 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
         // vbat >= rise_quickstep_thr: 直接跳到 cable_max-750
         // vbat < rise_quickstep_thr:  直接使用 ufcs_max_ma (bcc_parms[14])
         // 系数验证: 8000 * 14 / 80 = 1400 = ufcs_max_ma
-        let _ = write_current(c.fds, c.use_ufcs, 500);
+        let _ = write_current(c.use_ufcs, 500);
         if c.cfg.rise_quickstep_thr_mv > 0 && c.parms.vbat_mv >= c.cfg.rise_quickstep_thr_mv {
             // 高电压 quickstep: 一步逼近 cable_max
             let mut margin = (c.cable_max * 3) / 32;
@@ -60,7 +60,7 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
         if c.current_ma > phase_max {
             c.current_ma = phase_max;
         }
-        let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+        let _ = write_current(c.use_ufcs, c.current_ma);
         return;
     }
 
@@ -99,6 +99,6 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
         c.current_ma = phase_max;
     }
 
-    let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+    let _ = write_current(c.use_ufcs, c.current_ma);
     c.ramp_idx += 1;
 }

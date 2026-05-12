@@ -1,8 +1,8 @@
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::unix::io::RawFd;
 
 use libc::{
-    O_CLOEXEC, O_RDONLY, O_TRUNC, O_WRONLY, SEEK_SET, atoi, close, lseek, open, read, write,
+    O_CLOEXEC, O_RDONLY, O_TRUNC, O_WRONLY, SEEK_SET, close, lseek, open, read, write,
 };
 
 /* ------------------------------------------------------------------ */
@@ -28,6 +28,7 @@ pub const PROC_UFCS_FORCE_ACTIVE: &str = "/proc/oplus-votable/UFCS_CURR/force_ac
 /* SysfsFds: 持久持有的 sysfs 文件描述符集合                             */
 /* ------------------------------------------------------------------ */
 
+#[derive(Debug)]
 pub struct SysfsFds {
     pub usb_online: RawFd,
     pub battery_temp: RawFd,
@@ -49,7 +50,20 @@ impl SysfsFds {
             mmi_charging_enable: open_wo(PATH_MMI_CHARGING),
         };
         if fds.usb_online < 0 {
+            eprintln!("warn: failed to open {PATH_USB_ONLINE}");
             return Err(-1);
+        }
+        // 非关键 fd 打开失败时记录警告
+        for (fd, path) in [
+            (fds.battery_temp, PATH_BATTERY_TEMP),
+            (fds.chip_soc, PATH_CHIP_SOC),
+            (fds.adapter_power, PATH_ADAPTER_POWER),
+            (fds.bcc_current, PATH_BCC_CURRENT),
+            (fds.mmi_charging_enable, PATH_MMI_CHARGING),
+        ] {
+            if fd < 0 {
+                eprintln!("warn: failed to open {path}");
+            }
         }
         Ok(fds)
     }
@@ -82,15 +96,16 @@ pub fn read_int(fd: RawFd) -> Option<i32> {
         return None;
     }
     unsafe {
-        lseek(fd, 0, SEEK_SET);
+        if lseek(fd, 0, SEEK_SET) < 0 {
+            return None;
+        }
         let mut buf = [0u8; 16];
         let n = read(fd, buf.as_mut_ptr().cast(), buf.len() - 1);
         if n <= 0 {
             return None;
         }
         buf[n.cast_unsigned()] = 0;
-        let v = atoi(buf.as_ptr().cast());
-        Some(v)
+        parse_int_from_buf(&buf)
     }
 }
 
@@ -104,9 +119,15 @@ pub fn write_int(fd: RawFd, value: i32) -> Result<(), i32> {
         return Err(-1);
     };
     unsafe {
-        lseek(fd, 0, SEEK_SET);
+        if lseek(fd, 0, SEEK_SET) < 0 {
+            return Err(-1);
+        }
         let n = write(fd, s.as_ptr().cast(), s.to_bytes().len());
-        if n < 0 { Err(-1) } else { Ok(()) }
+        if n < 0 || n.cast_unsigned() < s.to_bytes().len() {
+            Err(-1)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -144,7 +165,11 @@ fn write_proc_raw(path: &str, data: &[u8]) -> Result<(), i32> {
         }
         let n = write(fd, data.as_ptr().cast(), data.len());
         close(fd);
-        if n < 0 { Err(-1) } else { Ok(()) }
+        if n < 0 || n.cast_unsigned() < data.len() {
+            Err(-1)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -154,10 +179,16 @@ fn write_proc_raw(path: &str, data: &[u8]) -> Result<(), i32> {
 
 /// 重置 4 个 votable 节点为 "0"
 pub fn reset_votables() {
-    let _ = write_proc_str(PROC_PPS_FORCE_VAL, "0");
-    let _ = write_proc_str(PROC_PPS_FORCE_ACTIVE, "0");
-    let _ = write_proc_str(PROC_UFCS_FORCE_VAL, "0");
-    let _ = write_proc_str(PROC_UFCS_FORCE_ACTIVE, "0");
+    for (path, name) in [
+        (PROC_PPS_FORCE_VAL, "PPS_CURR/force_val"),
+        (PROC_PPS_FORCE_ACTIVE, "PPS_CURR/force_active"),
+        (PROC_UFCS_FORCE_VAL, "UFCS_CURR/force_val"),
+        (PROC_UFCS_FORCE_ACTIVE, "UFCS_CURR/force_active"),
+    ] {
+        if let Err(e) = write_proc_str(path, "0") {
+            eprintln!("warn: failed to reset {name}: {e}");
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,7 +220,7 @@ pub fn read_usb_online() -> Option<bool> {
             return None;
         }
         buf[n.cast_unsigned()] = 0;
-        Some(atoi(buf.as_ptr().cast()) > 0)
+        Some(parse_int_from_buf(&buf).is_some_and(|v| v > 0))
     }
 }
 
@@ -241,6 +272,13 @@ fn close_fd(fd: &mut RawFd) {
         }
     }
     *fd = -1;
+}
+
+/// 从 null 结尾的字节缓冲区解析整数，替代 `atoi` 以区分合法 0 与解析失败
+unsafe fn parse_int_from_buf(buf: &[u8]) -> Option<i32> {
+    let cstr = unsafe { CStr::from_ptr(buf.as_ptr().cast()) };
+    let s = cstr.to_str().ok()?.trim();
+    s.parse::<i32>().ok()
 }
 
 fn read_temp_file(path: &str) -> Option<String> {

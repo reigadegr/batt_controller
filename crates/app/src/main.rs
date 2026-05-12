@@ -1,6 +1,7 @@
 mod cli;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use batt_config::{BattConfig, CONFIG_PATH};
@@ -12,11 +13,11 @@ use cli::{CliMode, charging_thread_wrapper, cli_exec, cli_parse};
 /* 信号处理                                                            */
 /* ------------------------------------------------------------------ */
 
+/// 全局运行标志，信号处理函数可直接访问
+static RUNNING: AtomicBool = AtomicBool::new(true);
+
 extern "C" fn sighandler(_sig: i32) {
-    // 信号终止使用 exit(3) 区分于正常退出
-    unsafe {
-        libc::_exit(3);
-    }
+    RUNNING.store(false, Ordering::Release);
 }
 
 /// 注册 SIGINT / SIGTERM / SIGPIPE 信号处理。
@@ -62,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 一次性命令模式: 执行后直接退出
     if args.mode != CliMode::Service {
         let cfg = load_config();
-        cli_exec(&args, &cfg).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        cli_exec(&args, &cfg).map_err(Into::<Box<dyn std::error::Error>>::into)?;
         return Ok(());
     }
 
@@ -76,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         setup_signals();
     }
 
-    let state = Arc::new(SharedState::new(cfg));
+    let state = Arc::new(SharedState::new(cfg, &RUNNING));
 
     // Thread 1: USB 在线监控
     let state_usb = Arc::clone(&state);
@@ -96,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            charging_thread_wrapper(&cfg_snapshot, &state_chg.running);
+            charging_thread_wrapper(&cfg_snapshot, state_chg.running);
         })
         .map_err(|e| format!("spawn charging: {e}"))?;
 
@@ -107,9 +108,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .spawn(move || monitor_battery_log_thread(&state_log))
         .map_err(|e| format!("spawn battery_log: {e}"))?;
 
-    let _ = handle_usb.join();
-    let _ = handle_chg.join();
-    let _ = handle_log.join();
+    join_and_report("usb_monitor", handle_usb);
+    join_and_report("charging", handle_chg);
+    join_and_report("battery_log", handle_log);
 
     Ok(())
+}
+
+fn join_and_report(name: &str, h: thread::JoinHandle<()>) {
+    if let Err(e) = h.join() {
+        eprintln!("thread '{name}' panicked: {e:?}");
+    }
 }

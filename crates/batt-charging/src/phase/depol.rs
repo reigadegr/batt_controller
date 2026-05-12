@@ -31,32 +31,32 @@ pub fn exec_depol(c: &mut LoopCtx<'_>) {
     };
 
     // Round 1: 50 → 初始负值 → 脉冲下降至 0
-    let _ = write_current(c.fds, c.use_ufcs, 50);
+    let _ = write_current(c.use_ufcs, 50);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, -(neg_step * 2 / 3));
+    let _ = write_current(c.use_ufcs, -(neg_step * 2 / 3));
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
 
-    let _ = write_current(c.fds, c.use_ufcs, pulse);
+    let _ = write_current(c.use_ufcs, pulse);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 300);
+    let _ = write_current(c.use_ufcs, 300);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 250);
+    let _ = write_current(c.use_ufcs, 250);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 50);
+    let _ = write_current(c.use_ufcs, 50);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, c.cfg.depol_zero_ma);
+    let _ = write_current(c.use_ufcs, c.cfg.depol_zero_ma);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
@@ -67,29 +67,29 @@ pub fn exec_depol(c: &mut LoopCtx<'_>) {
         if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
             return;
         }
-        let _ = write_current(c.fds, c.use_ufcs, neg);
+        let _ = write_current(c.use_ufcs, neg);
         neg -= neg_step;
     }
 
-    let _ = write_current(c.fds, c.use_ufcs, pulse);
+    let _ = write_current(c.use_ufcs, pulse);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 300);
+    let _ = write_current(c.use_ufcs, 300);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 250);
+    let _ = write_current(c.use_ufcs, 250);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
-    let _ = write_current(c.fds, c.use_ufcs, 50);
+    let _ = write_current(c.use_ufcs, 50);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }
 
     // strace 确认: DEPOL 结束后写 1000 进入 FULL
-    let _ = write_current(c.fds, c.use_ufcs, DEPOL_EXIT_CURRENT_MA);
+    let _ = write_current(c.use_ufcs, DEPOL_EXIT_CURRENT_MA);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;
     }

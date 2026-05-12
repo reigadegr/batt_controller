@@ -23,9 +23,11 @@ const FULL_HOLD_CURRENT_MA: i32 = 1000;
 /// 充电主循环上下文: 避免在函数间传递过多参数
 pub struct LoopCtx<'a> {
     // 配置和硬件
+    // fds 保留在上下文中以维持 sysfs fd 生命周期（Drop 时自动关闭）
+    #[allow(dead_code)]
     pub fds: &'a mut SysfsFds,
     pub cfg: &'a BattConfig,
-    pub running: &'a AtomicBool,
+    pub running: &'static AtomicBool,
 
     // 运行时状态
     pub current_ma: i32,
@@ -53,7 +55,7 @@ pub struct LoopCtx<'a> {
 fn init_charging<'a>(
     fds: &'a mut SysfsFds,
     cfg: &'a BattConfig,
-    running: &'a AtomicBool,
+    running: &'static AtomicBool,
 ) -> LoopCtx<'a> {
     let mut c = LoopCtx {
         fds,
@@ -175,7 +177,7 @@ fn execute_phase(c: &mut LoopCtx<'_>) {
         ChargePhase::Depol => exec_depol(c),
         ChargePhase::Full => {
             // strace 确认: FULL 阶段持续写 1000mA (非 500)
-            let _ = write_current(c.fds, c.use_ufcs, FULL_HOLD_CURRENT_MA);
+            let _ = write_current(c.use_ufcs, FULL_HOLD_CURRENT_MA);
         }
     }
 }
@@ -199,7 +201,7 @@ fn check_full_charge(c: &mut LoopCtx<'_>) {
 /// - `fds`: 已打开的 sysfs fd 集合
 /// - `cfg`: 配置
 /// - `running`: 运行标志（设为 false 时退出循环）
-pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &AtomicBool) {
+pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &'static AtomicBool) {
     // 缓存 chip_soc fd，避免后续通过 fds 引用
     let chip_soc_fd = fds.chip_soc;
 

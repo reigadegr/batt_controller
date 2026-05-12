@@ -26,6 +26,6 @@ pub fn exec_tc(c: &mut LoopCtx<'_>) {
         if c.current_ma < cap {
             c.current_ma = cap;
         }
-        let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+        let _ = write_current(c.use_ufcs, c.current_ma);
     }
 }

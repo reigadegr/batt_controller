@@ -2,7 +2,7 @@ pub const TEMP_RANGE_MAX: usize = 5;
 pub const CV_STEP_MAX: usize = 8;
 pub const CONFIG_PATH: &str = "/data/opbatt/batt_control";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BattConfig {
     // 温控
     pub temp_range: [i32; TEMP_RANGE_MAX],
@@ -86,16 +86,7 @@ fn parse_int_array(val: &str, arr: &mut [i32]) -> usize {
 
 /// 从 key=value 行中提取 value（精确键匹配）
 fn extract_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    if line.len() < key.len() + 1 {
-        return None;
-    }
-    if !line.starts_with(key) {
-        return None;
-    }
-    match line.as_bytes().get(key.len()) {
-        Some(b'=') => Some(&line[key.len() + 1..]),
-        _ => None,
-    }
+    line.strip_prefix(key)?.strip_prefix('=')
 }
 
 impl Default for BattConfig {
@@ -233,7 +224,7 @@ impl BattConfig {
 
         for line in content.lines() {
             let line = line.trim_end_matches('\r').trim();
-            if line.is_empty() {
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
             cfg.apply_line(line);

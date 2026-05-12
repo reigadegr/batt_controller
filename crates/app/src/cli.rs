@@ -430,7 +430,7 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
 /* ------------------------------------------------------------------ */
 
 /// 充电控制线程包装函数。等待 USB 在线后打开 sysfs fd 并进入充电循环。
-pub fn charging_thread_wrapper(config: &BattConfig, running: &std::sync::atomic::AtomicBool) {
+pub fn charging_thread_wrapper(config: &BattConfig, running: &'static std::sync::atomic::AtomicBool) {
     while running.load(std::sync::atomic::Ordering::Relaxed) {
         // 等待 USB 在线 (与原始二进制一致: 2s 轮询)
         while running.load(std::sync::atomic::Ordering::Relaxed)

@@ -29,19 +29,17 @@ pub struct BatteryLog {
 
 pub struct SharedState {
     pub usb_online: AtomicBool,
-    pub charging_active: AtomicBool,
-    pub running: AtomicBool,
+    pub running: &'static AtomicBool,
     pub config: Mutex<BattConfig>,
     pub blog: Mutex<BatteryLog>,
 }
 
 impl SharedState {
     #[must_use]
-    pub fn new(config: BattConfig) -> Self {
+    pub fn new(config: BattConfig, running: &'static AtomicBool) -> Self {
         Self {
             usb_online: AtomicBool::new(false),
-            charging_active: AtomicBool::new(false),
-            running: AtomicBool::new(true),
+            running,
             config: Mutex::new(config),
             blog: Mutex::new(BatteryLog::default()),
         }
@@ -96,15 +94,11 @@ pub fn parse_battery_log(buf: &str) -> BatteryLog {
 pub fn monitor_usb_thread(state: &Arc<SharedState>) {
     let mut prev_online = false;
 
-    while state.running.load(Ordering::Relaxed) {
+    while state.running.load(Ordering::Acquire) {
         let online = batt_sysfs::read_usb_online().unwrap_or(false);
 
-        if online && !prev_online {
-            state.usb_online.store(true, Ordering::Relaxed);
-            state.charging_active.store(true, Ordering::Relaxed);
-        } else if !online && prev_online {
-            state.usb_online.store(false, Ordering::Relaxed);
-            state.charging_active.store(false, Ordering::Relaxed);
+        if online != prev_online {
+            state.usb_online.store(online, Ordering::Release);
         }
         prev_online = online;
 
@@ -118,8 +112,8 @@ pub fn monitor_usb_thread(state: &Arc<SharedState>) {
 /* ------------------------------------------------------------------ */
 
 pub fn monitor_battery_log_thread(state: &Arc<SharedState>) {
-    while state.running.load(Ordering::Relaxed) {
-        if state.usb_online.load(Ordering::Relaxed)
+    while state.running.load(Ordering::Acquire) {
+        if state.usb_online.load(Ordering::Acquire)
             && let Some(buf) = read_battery_log()
         {
             let blog = parse_battery_log(&buf);

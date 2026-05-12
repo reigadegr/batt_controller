@@ -44,7 +44,7 @@ fn exec_cv_inner(c: &mut LoopCtx<'_>, step_mv: &[i32], step_ma: &[i32], step_cou
                 c.current_ma = if i > 0 { step_ma[i - 1] } else { c.current_ma };
                 c.cv_step_idx = i as i32;
                 c.cv_holding = 0;
-                let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+                let _ = write_current(c.use_ufcs, c.current_ma);
                 return;
             }
         }
@@ -57,11 +57,13 @@ fn exec_cv_inner(c: &mut LoopCtx<'_>, step_mv: &[i32], step_ma: &[i32], step_cou
             c.current_ma = step_ma[i];
             c.cv_step_idx = i as i32 + 1;
             dropped = true;
+        } else {
+            break; // step_mv 单调递增, 后续不会匹配
         }
     }
 
     if dropped {
-        let _ = write_current(c.fds, c.use_ufcs, c.current_ma);
+        let _ = write_current(c.use_ufcs, c.current_ma);
         let ts = get_timestamp();
         log_write(&format!(
             "{ts} ==== CV step-down to {}mA (vbat={}mV, step={}) ====\n",

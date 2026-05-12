@@ -1,8 +1,19 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write as _;
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 pub const LOG_PATH: &str = "/data/opbatt/battchg.log";
+
+static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+
+fn get_log_file() -> Option<std::sync::MutexGuard<'static, Option<File>>> {
+    let mut guard = LOG_FILE.lock().ok()?;
+    if guard.is_none() {
+        *guard = Some(OpenOptions::new().create(true).append(true).open(LOG_PATH).ok()?);
+    }
+    Some(guard)
+}
 
 /// 返回格式化时间戳字符串 "[YYYY-MM-DD-HH:MM:SS]"
 #[must_use]
@@ -13,8 +24,9 @@ pub fn get_timestamp() -> String {
         .as_secs()
         .cast_signed();
 
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&raw const epoch, &raw mut tm) };
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
+    unsafe { libc::localtime_r(&raw const epoch, tm.as_mut_ptr()) };
+    let tm = unsafe { tm.assume_init() };
 
     format!(
         "[{:04}-{:02}-{:02}-{:02}:{:02}:{:02}]",
@@ -33,7 +45,9 @@ pub fn log_write(msg: &str) {
     // 忽略 stdout flush 错误
     let _ = std::io::stdout().flush();
 
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_PATH) {
+    if let Some(mut guard) = get_log_file()
+        && let Some(ref mut file) = *guard
+    {
         let _ = file.write_all(msg.as_bytes());
     }
 }

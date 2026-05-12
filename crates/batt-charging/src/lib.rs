@@ -19,7 +19,6 @@ pub use loop_::run;
 
 /// 充电阶段
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum ChargePhase {
     /// 未充电
     Idle,

@@ -6,7 +6,7 @@ use crate::loop_::LoopCtx;
 
 /// 等待指定毫秒，期间检测运行标志；返回 false 表示应退出
 pub fn sleep_or_stop(c: &LoopCtx<'_>, ms: u64) -> bool {
-    if !c.running.load(Ordering::Relaxed) {
+    if !c.running.load(Ordering::Acquire) {
         return false;
     }
     thread::sleep(Duration::from_millis(ms));
