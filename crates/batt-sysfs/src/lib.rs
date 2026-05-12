@@ -110,22 +110,6 @@ pub fn write_int(fd: RawFd, value: i32) -> Result<(), i32> {
     }
 }
 
-/// 写入字符串（仅用于 sysfs fd）
-pub fn write_str(fd: RawFd, val: &str) -> Result<(), i32> {
-    if fd < 0 {
-        return Err(-1);
-    }
-    let Ok(s) = c_string_from(val) else {
-        eprintln!("write_str: invalid value: {val}");
-        return Err(-1);
-    };
-    unsafe {
-        lseek(fd, 0, SEEK_SET);
-        let n = write(fd, s.as_ptr().cast(), s.to_bytes().len());
-        if n < 0 { Err(-1) } else { Ok(()) }
-    }
-}
-
 /* ------------------------------------------------------------------ */
 /* proc 文件 open-write-close 模式                                     */
 /* ------------------------------------------------------------------ */

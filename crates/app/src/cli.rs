@@ -149,12 +149,6 @@ const BATTERY_MODELS: &[BatteryModel] = &[
 /* CLI 解析                                                            */
 /* ------------------------------------------------------------------ */
 
-/// 从短选项字符串中提取首个字符。
-/// 解析短选项首字符。调用方保证 `s` 非空。
-fn parse_short(s: &str) -> Option<char> {
-    s.chars().next()
-}
-
 /// 解析命令行参数。成功返回 `Ok(CliArgs)`，失败返回 `Err`。
 ///
 /// # Errors
@@ -165,7 +159,6 @@ pub fn cli_parse() -> Result<CliArgs, String> {
     let raw: Vec<String> = std::env::args().collect();
     let mut args = CliArgs::default();
     let mut pos = 1usize; // 跳过 argv[0]
-    let mut consumed_any = false;
 
     while pos < raw.len() {
         if raw[pos] == "--" {
@@ -176,12 +169,8 @@ pub fn cli_parse() -> Result<CliArgs, String> {
         } else if raw[pos].starts_with('-') {
             parse_short_opts(&raw, &mut pos, &mut args)?;
         }
-        consumed_any = true;
     }
 
-    if !consumed_any {
-        args.mode = CliMode::Service;
-    }
     Ok(args)
 }
 
@@ -242,14 +231,16 @@ fn parse_long(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Result<(),
 /// 从 `raw[pos]` 解析短选项（支持合并），推进 `pos`。
 fn parse_short_opts(raw: &[String], pos: &mut usize, args: &mut CliArgs) -> Result<(), String> {
     let item = &raw[*pos];
-    let flag = parse_short(&item[1..]).ok_or("empty short flag")?;
+    let flag = item[1..].chars().next().ok_or("empty short flag")?;
     // 带参数的选项: 如果同一 token 有剩余字符则用之，否则取下一个 token
     let arg_str = |pos: &mut usize| -> Result<&str, String> {
         let rest = &item[2..];
+        *pos += 1;
         if rest.is_empty() {
+            // 空格分隔: -c 500 → 先跳过选项 token，再取下一个
             next_arg(raw, pos, &flag.to_string())
         } else {
-            *pos += 1;
+            // 合并: -c500 → 直接用 rest
             Ok(rest)
         }
     };
@@ -360,17 +351,15 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
             println!("{val}");
         }
         CliMode::Charge => {
-            let mut fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
+            let fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
             write_int(fds.bcc_current, args.value).map_err(|_| "write bcc_current failed")?;
             println!("bcc_current set to {} mA", args.value);
-            fds.close_all();
         }
         CliMode::Enable => {
-            let mut fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
+            let fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
             write_int(fds.mmi_charging_enable, args.value)
                 .map_err(|_| "write mmi_charging_enable failed")?;
             println!("mmi_charging_enable set to {}", args.value);
-            fds.close_all();
         }
         CliMode::Pps => {
             write_proc_int(batt_sysfs::PROC_PPS_FORCE_VAL, args.value)
@@ -463,7 +452,6 @@ pub fn charging_thread_wrapper(config: &BattConfig, running: &std::sync::atomic:
         // 进入充电控制主循环
         charging_loop(&mut fds, config, running);
 
-        // USB 拔出后 run() 返回，关闭 fd 回到外层等待
-        fds.close_all();
+        // USB 拔出后 run() 返回，fds 离开作用域时 Drop 自动关闭
     }
 }

@@ -11,6 +11,8 @@ const DEPOL_STEP_INTERVAL_MS: u64 = 500;
 const DEFAULT_DEPOL_PULSE_MA: i32 = 500;
 /// 默认负步进 (mA)
 const DEFAULT_DEPOL_NEG_STEP: i32 = 150;
+/// DEPOL 结束后写入的电流值 (mA)
+const DEPOL_EXIT_CURRENT_MA: i32 = 1000;
 
 /// DEPOL 去极化阶段
 pub fn exec_depol(c: &mut LoopCtx<'_>) {
@@ -87,7 +89,6 @@ pub fn exec_depol(c: &mut LoopCtx<'_>) {
     }
 
     // strace 确认: DEPOL 结束后写 1000 进入 FULL
-    const DEPOL_EXIT_CURRENT_MA: i32 = 1000;
     let _ = write_current(c.fds, c.use_ufcs, DEPOL_EXIT_CURRENT_MA);
     if !sleep_or_stop(c, DEPOL_STEP_INTERVAL_MS) {
         return;

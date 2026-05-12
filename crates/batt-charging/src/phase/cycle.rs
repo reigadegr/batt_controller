@@ -9,9 +9,9 @@ use crate::loop_::LoopCtx;
 use crate::ChargePhase;
 
 /// 默认 UFCS 重置延迟秒数
-const DEFAULT_UFCS_RESET_DELAY: u64 = 10;
+const DEFAULT_UFCS_RESET_DELAY: i32 = 10;
 /// 默认循环间隔毫秒数
-const DEFAULT_LOOP_INTERVAL_MS: u64 = 450;
+const DEFAULT_LOOP_INTERVAL_MS: i32 = 450;
 
 /// 充电周期结束处理（含 dumpsys reset + 协议切换）
 /// 返回 true 表示执行了周期结束逻辑（调用方应 continue）
@@ -42,18 +42,18 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
             if c.cfg.ufcs_reset_delay > 0 {
                 c.cfg.ufcs_reset_delay
             } else {
-                DEFAULT_UFCS_RESET_DELAY as i32
+                DEFAULT_UFCS_RESET_DELAY
             }
         ));
         let delay = if c.cfg.ufcs_reset_delay > 0 {
             c.cfg.ufcs_reset_delay
         } else {
-            DEFAULT_UFCS_RESET_DELAY as i32
+            DEFAULT_UFCS_RESET_DELAY
         };
         let delay_ms = if c.cfg.loop_interval_ms > 0 {
             c.cfg.loop_interval_ms
         } else {
-            DEFAULT_LOOP_INTERVAL_MS as i32
+            DEFAULT_LOOP_INTERVAL_MS
         };
         for _ in 0..(delay * 1000).div_euclid(delay_ms) {
             if !c.running.load(Ordering::Relaxed) {

@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::loop_::LoopCtx;
 
 /// 等待指定毫秒，期间检测运行标志；返回 false 表示应退出
-pub(super) fn sleep_or_stop(c: &LoopCtx<'_>, ms: u64) -> bool {
+pub fn sleep_or_stop(c: &LoopCtx<'_>, ms: u64) -> bool {
     if !c.running.load(Ordering::Relaxed) {
         return false;
     }

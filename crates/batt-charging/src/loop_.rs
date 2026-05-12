@@ -180,7 +180,7 @@ fn execute_phase(c: &mut LoopCtx<'_>) {
     }
 }
 
-/// 检查是否满足满电条件（batt_full_thr_mv 阈值）
+/// 检查是否满足满电条件（`batt_full_thr_mv` 阈值）
 fn check_full_charge(c: &mut LoopCtx<'_>) {
     if c.phase != ChargePhase::Full
         && c.cfg.batt_full_thr_mv > 0

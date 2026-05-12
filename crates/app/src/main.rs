@@ -3,12 +3,10 @@ mod cli;
 use std::sync::Arc;
 use std::thread;
 
-use batt_config::BattConfig;
+use batt_config::{BattConfig, CONFIG_PATH};
 use batt_monitor::{SharedState, monitor_battery_log_thread, monitor_usb_thread};
 
 use cli::{CliMode, charging_thread_wrapper, cli_exec, cli_parse};
-
-const CONFIG_PATH: &str = "/data/opbatt/batt_control";
 
 /* ------------------------------------------------------------------ */
 /* 信号处理                                                            */
@@ -59,18 +57,12 @@ fn load_config() -> BattConfig {
 /* ------------------------------------------------------------------ */
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = cli_parse().map_err(|e| -> Box<dyn std::error::Error> {
-        eprintln!("{e}");
-        e.into()
-    })?;
+    let args = cli_parse().map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // 一次性命令模式: 执行后直接退出
     if args.mode != CliMode::Service {
         let cfg = load_config();
-        cli_exec(&args, &cfg).map_err(|e| -> Box<dyn std::error::Error> {
-            eprintln!("{e}");
-            e.into()
-        })?;
+        cli_exec(&args, &cfg).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         return Ok(());
     }
 
