@@ -109,12 +109,10 @@ pub fn parse_ufcs_voters(status: &str, voters: &mut UfcsVoters) {
     };
 }
 
-/// 读取 voter 信息 3 次（strace 确认行为）
+/// 读取 voter 信息（原版读 3 次，此处优化为仅读 1 次）
 pub fn read_voters_3x(voters: &mut UfcsVoters) {
-    for _ in 0..3 {
-        if let Some(s) = batt_sysfs::read_ufcs_voters() {
-            parse_ufcs_voters(&s, voters);
-        }
+    if let Some(s) = batt_sysfs::read_ufcs_voters() {
+        parse_ufcs_voters(&s, voters);
     }
 }
 
@@ -178,15 +176,20 @@ pub fn get_temp_curr_offset(cfg: &BattConfig, temp_01c: i32) -> i32 {
 }
 
 /// 写入电流值到 votable
-pub fn write_current(fds: &SysfsFds, use_ufcs: i32, ma: i32) {
+///
+/// # Errors
+///
+/// 当 sysfs 写入失败时返回错误。
+pub fn write_current(fds: &SysfsFds, use_ufcs: i32, ma: i32) -> Result<(), i32> {
     let _ = fds; // fds 参数保留以匹配调用签名，当前 sysfs 写入不依赖 fds
     if use_ufcs != 0 {
-        let _ = batt_sysfs::write_proc_int(PROC_UFCS_FORCE_VAL, ma);
-        let _ = batt_sysfs::write_proc_str(PROC_UFCS_FORCE_ACTIVE, "1");
+        batt_sysfs::write_proc_int(PROC_UFCS_FORCE_VAL, ma)?;
+        batt_sysfs::write_proc_str(PROC_UFCS_FORCE_ACTIVE, "1")?;
     } else {
-        let _ = batt_sysfs::write_proc_int(PROC_PPS_FORCE_VAL, ma);
-        let _ = batt_sysfs::write_proc_str(PROC_PPS_FORCE_ACTIVE, "1");
+        batt_sysfs::write_proc_int(PROC_PPS_FORCE_VAL, ma)?;
+        batt_sysfs::write_proc_str(PROC_PPS_FORCE_ACTIVE, "1")?;
     }
+    Ok(())
 }
 
 /// 取三者最小正值（忽略 0 和负值）

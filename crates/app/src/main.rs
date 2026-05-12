@@ -15,9 +15,9 @@ const CONFIG_PATH: &str = "/data/opbatt/batt_control";
 /* ------------------------------------------------------------------ */
 
 extern "C" fn sighandler(_sig: i32) {
-    // 与原始二进制一致: 收到信号后直接退出
+    // 信号终止使用 exit(3) 区分于正常退出
     unsafe {
-        libc::_exit(0);
+        libc::_exit(3);
     }
 }
 
@@ -59,17 +59,17 @@ fn load_config() -> BattConfig {
 /* ------------------------------------------------------------------ */
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = cli_parse().map_err(|e| {
+    let args = cli_parse().map_err(|e| -> Box<dyn std::error::Error> {
         eprintln!("{e}");
-        std::process::exit(1);
+        e.into()
     })?;
 
     // 一次性命令模式: 执行后直接退出
     if args.mode != CliMode::Service {
         let cfg = load_config();
-        cli_exec(&args, &cfg).map_err(|e| {
+        cli_exec(&args, &cfg).map_err(|e| -> Box<dyn std::error::Error> {
             eprintln!("{e}");
-            std::process::exit(1);
+            e.into()
         })?;
         return Ok(());
     }

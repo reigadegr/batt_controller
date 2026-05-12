@@ -13,6 +13,13 @@ use crate::charging::{
 };
 use crate::phase::{calc_effective_max, exec_cv, exec_depol, exec_rise, exec_tc, handle_cycle_end};
 
+/// 循环体轮询间隔 (ms)
+const LOOP_POLL_INTERVAL_MS: u64 = 500;
+/// 初始电流 (mA)
+const INITIAL_CURRENT_MA: i32 = 500;
+/// FULL 阶段维持电流 (mA)
+const FULL_HOLD_CURRENT_MA: i32 = 1000;
+
 /// 充电主循环上下文: 避免在函数间传递过多参数
 pub struct LoopCtx<'a> {
     // 配置和硬件
@@ -42,19 +49,17 @@ pub struct LoopCtx<'a> {
     pub voters: crate::UfcsVoters,
 }
 
-/// 充电控制主循环（在子线程中运行）
-/// - `fds`: 已打开的 sysfs fd 集合
-/// - `cfg`: 配置
-/// - `running`: 运行标志（设为 false 时退出循环）
-pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &AtomicBool) {
-    // 缓存 chip_soc fd，避免后续通过 fds 引用
-    let chip_soc_fd = fds.chip_soc;
-
+/// 初始化充电上下文: 读取日志、重置 votable、设置充电状态
+fn init_charging<'a>(
+    fds: &'a mut SysfsFds,
+    cfg: &'a BattConfig,
+    running: &'a AtomicBool,
+) -> LoopCtx<'a> {
     let mut c = LoopCtx {
         fds,
         cfg,
         running,
-        current_ma: 500,
+        current_ma: INITIAL_CURRENT_MA,
         max_ma: cfg.ufcs_max,
         cable_max: 0,
         use_ufcs: 1,
@@ -105,71 +110,103 @@ pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &AtomicBool) {
         c.max_ma
     ));
 
-    // ---- 阶段 5: 充电控制主循环 ----
+    c
+}
+
+/// 单次充电循环迭代: 读取参数、状态机转换、执行阶段动作
+fn process_iteration(c: &mut LoopCtx<'_>, chip_soc_fd: i32) {
+    // 读取 bcc_parms
+    if let Some(s) = batt_sysfs::read_bcc_parms() {
+        let _ = parse_bcc_parms(&s, &mut c.parms);
+    } else {
+        thread::sleep(Duration::from_millis(LOOP_POLL_INTERVAL_MS));
+        return;
+    }
+
+    // 读取 SoC
+    c.soc = batt_sysfs::read_int(chip_soc_fd).unwrap_or(0);
+
+    // 充电周期结束检测
+    if handle_cycle_end(c) {
+        return;
+    }
+
+    // 温控: 根据温度/thermal_hi/STEP_VOTER 调整最大电流
+    calc_effective_max(c);
+
+    // ---- 充电阶段状态机 ----
+    update_phase(c);
+
+    // 执行当前阶段动作
+    execute_phase(c);
+
+    // 满电判断: batt_full_thr_mv 额外检查
+    check_full_charge(c);
+}
+
+/// 更新充电阶段（状态机转移）
+fn update_phase(c: &mut LoopCtx<'_>) {
+    let new_phase = next_phase(c.phase, c.cfg, &c.parms, c.soc, c.current_ma);
+    if new_phase != c.phase {
+        let ts = get_timestamp();
+        log_write(&format!(
+            "{ts} ==== Phase {} -> {} (vbat={}mV, soc={}%) ====\n",
+            phase_name(c.phase),
+            phase_name(new_phase),
+            c.parms.vbat_mv,
+            c.soc
+        ));
+        c.phase = new_phase;
+    }
+}
+
+/// 执行当前充电阶段的动作
+fn execute_phase(c: &mut LoopCtx<'_>) {
+    match c.phase {
+        ChargePhase::Idle => {}
+        ChargePhase::Rise | ChargePhase::RestartRise => {
+            // strace 确认: 到达 phase_max 后静默维持，不写 force_val
+            if c.rise_max_reached == 0 {
+                exec_rise(c);
+            }
+        }
+        ChargePhase::Cv => exec_cv(c),
+        ChargePhase::Tc => exec_tc(c),
+        ChargePhase::Depol => exec_depol(c),
+        ChargePhase::Full => {
+            // strace 确认: FULL 阶段持续写 1000mA (非 500)
+            let _ = write_current(c.fds, c.use_ufcs, FULL_HOLD_CURRENT_MA);
+        }
+    }
+}
+
+/// 检查是否满足满电条件（batt_full_thr_mv 阈值）
+fn check_full_charge(c: &mut LoopCtx<'_>) {
+    if c.phase != ChargePhase::Full
+        && c.cfg.batt_full_thr_mv > 0
+        && c.parms.vbat_mv >= c.cfg.batt_full_thr_mv
+    {
+        let ts = get_timestamp();
+        log_write(&format!(
+            "{ts} ==== Battery full: vbat={}mV >= batt_full_thr_mv={}mV ====\n",
+            c.parms.vbat_mv, c.cfg.batt_full_thr_mv
+        ));
+        c.phase = ChargePhase::Full;
+    }
+}
+
+/// 充电控制主循环（在子线程中运行）
+/// - `fds`: 已打开的 sysfs fd 集合
+/// - `cfg`: 配置
+/// - `running`: 运行标志（设为 false 时退出循环）
+pub fn run(fds: &mut SysfsFds, cfg: &BattConfig, running: &AtomicBool) {
+    // 缓存 chip_soc fd，避免后续通过 fds 引用
+    let chip_soc_fd = fds.chip_soc;
+
+    let mut c = init_charging(fds, cfg, running);
+
     while running.load(Ordering::Relaxed) {
-        // 读取 bcc_parms
-        if let Some(s) = batt_sysfs::read_bcc_parms() {
-            let _ = parse_bcc_parms(&s, &mut c.parms);
-        } else {
-            thread::sleep(Duration::from_millis(500));
-            continue;
-        }
-
-        // 读取 SoC
-        c.soc = batt_sysfs::read_int(chip_soc_fd).unwrap_or(0);
-
-        // 充电周期结束检测
-        if handle_cycle_end(&mut c) {
-            continue;
-        }
-
-        // 温控: 根据温度/thermal_hi/STEP_VOTER 调整最大电流
-        calc_effective_max(&mut c);
-
-        // ---- 充电阶段状态机 ----
-        let new_phase = next_phase(c.phase, cfg, &c.parms, c.soc, c.current_ma);
-        if new_phase != c.phase {
-            let ts = get_timestamp();
-            log_write(&format!(
-                "{ts} ==== Phase {} -> {} (vbat={}mV, soc={}%) ====\n",
-                phase_name(c.phase),
-                phase_name(new_phase),
-                c.parms.vbat_mv,
-                c.soc
-            ));
-            c.phase = new_phase;
-        }
-
-        match c.phase {
-            ChargePhase::Idle => {}
-            ChargePhase::Rise | ChargePhase::RestartRise => {
-                // strace 确认: 到达 phase_max 后静默维持，不写 force_val
-                if c.rise_max_reached == 0 {
-                    exec_rise(&mut c);
-                }
-            }
-            ChargePhase::Cv => exec_cv(&mut c),
-            ChargePhase::Tc => exec_tc(&mut c),
-            ChargePhase::Depol => exec_depol(&mut c),
-            ChargePhase::Full => {
-                // strace 确认: FULL 阶段持续写 1000mA (非 500)
-                write_current(c.fds, c.use_ufcs, 1000);
-            }
-        }
-
-        // 满电判断: batt_full_thr_mv 额外检查
-        if c.phase != ChargePhase::Full
-            && cfg.batt_full_thr_mv > 0
-            && c.parms.vbat_mv >= cfg.batt_full_thr_mv
-        {
-            let ts = get_timestamp();
-            log_write(&format!(
-                "{ts} ==== Battery full: vbat={}mV >= batt_full_thr_mv={}mV ====\n",
-                c.parms.vbat_mv, cfg.batt_full_thr_mv
-            ));
-            c.phase = ChargePhase::Full;
-        }
-
-        thread::sleep(Duration::from_millis(500));
+        process_iteration(&mut c, chip_soc_fd);
+        thread::sleep(Duration::from_millis(LOOP_POLL_INTERVAL_MS));
     }
 }

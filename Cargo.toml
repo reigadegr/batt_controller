@@ -33,3 +33,4 @@ cast_precision_loss = "allow"
 struct_excessive_bools = "allow"
 
 [workspace.dependencies]
+thiserror = "2"
