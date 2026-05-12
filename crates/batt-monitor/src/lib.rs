@@ -58,12 +58,21 @@ pub fn parse_battery_log(buf: &str) -> BatteryLog {
     let mut count = 0;
 
     // 跳过前导逗号
-    let s = buf.strip_prefix(',').unwrap_or(buf);
+    let s = match buf.strip_prefix(',') {
+        Some(s) => s,
+        None => buf,
+    };
 
     for token in s.split(',').take(20) {
         // 截断到换行符
-        let token = token.find('\n').map_or(token, |pos| &token[..pos]);
-        fields[count] = token.trim().parse::<i32>().unwrap_or(0);
+        let token = match token.find('\n') {
+            Some(pos) => &token[..pos],
+            None => token,
+        };
+        fields[count] = match token.trim().parse::<i32>() {
+            Ok(v) => v,
+            Err(_) => 0,
+        };
         count += 1;
     }
 
@@ -95,7 +104,10 @@ pub fn monitor_usb_thread(state: &Arc<SharedState>) {
     let mut prev_online = false;
 
     while state.running.load(Ordering::Acquire) {
-        let online = batt_sysfs::read_usb_online().unwrap_or(false);
+        let online = match batt_sysfs::read_usb_online() {
+            Some(v) => v,
+            None => false,
+        };
 
         if online != prev_online {
             state.usb_online.store(online, Ordering::Release);
@@ -117,10 +129,11 @@ pub fn monitor_battery_log_thread(state: &Arc<SharedState>) {
             && let Some(buf) = read_battery_log()
         {
             let blog = parse_battery_log(&buf);
-            *state
-                .blog
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = blog;
+            let mut guard = match state.blog.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            };
+            *guard = blog;
         }
 
         thread::sleep(Duration::from_secs(5));

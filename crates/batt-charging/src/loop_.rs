@@ -126,7 +126,10 @@ fn process_iteration(c: &mut LoopCtx<'_>, chip_soc_fd: i32) {
     }
 
     // 读取 SoC
-    c.soc = batt_sysfs::read_int(chip_soc_fd).unwrap_or(0);
+    c.soc = match batt_sysfs::read_int(chip_soc_fd) {
+        Some(v) => v,
+        None => 0,
+    };
 
     // 充电周期结束检测
     if handle_cycle_end(c) {

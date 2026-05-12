@@ -73,12 +73,18 @@ fn extract_voter_int(status: &str, tag: &str) -> i32 {
             continue;
         };
         let val_str = &rest[vpos + 2..];
-        let end = val_str
+        let end = match val_str
             .bytes()
             .position(|b| !(b.is_ascii_digit() || b == b'-'))
-            .unwrap_or(val_str.len());
+        {
+            Some(pos) => pos,
+            None => val_str.len(),
+        };
         if end > 0 {
-            return val_str[..end].parse().unwrap_or(0);
+            return match val_str[..end].parse() {
+                Ok(v) => v,
+                Err(_) => 0,
+            };
         }
     }
     0

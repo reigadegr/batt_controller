@@ -337,17 +337,26 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
     match args.mode {
         CliMode::Temp => {
             let fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
-            let val = read_int(fds.battery_temp).unwrap_or(-1);
+            let val = match read_int(fds.battery_temp) {
+                Some(v) => v,
+                None => -1,
+            };
             println!("{val}");
         }
         CliMode::Soc => {
             let fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
-            let val = read_int(fds.chip_soc).unwrap_or(-1);
+            let val = match read_int(fds.chip_soc) {
+                Some(v) => v,
+                None => -1,
+            };
             println!("{val}");
         }
         CliMode::Power => {
             let fds = SysfsFds::open_all().map_err(|_| "sysfs_open_all failed")?;
-            let val = read_int(fds.adapter_power).unwrap_or(-1);
+            let val = match read_int(fds.adapter_power) {
+                Some(v) => v,
+                None => -1,
+            };
             println!("{val}");
         }
         CliMode::Charge => {
@@ -389,7 +398,10 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
             if status.success() {
                 println!("kernel log saved to /data/opbatt/kernellog/");
             } else {
-                let code = status.code().unwrap_or(-1);
+                let code = match status.code() {
+                    Some(c) => c,
+                    None => -1,
+                };
                 return Err(format!("kernel log collection failed (exit {code})"));
             }
         }
@@ -430,11 +442,17 @@ pub fn cli_exec(args: &CliArgs, _cfg: &BattConfig) -> Result<(), String> {
 /* ------------------------------------------------------------------ */
 
 /// 充电控制线程包装函数。等待 USB 在线后打开 sysfs fd 并进入充电循环。
-pub fn charging_thread_wrapper(config: &BattConfig, running: &'static std::sync::atomic::AtomicBool) {
+pub fn charging_thread_wrapper(
+    config: &BattConfig,
+    running: &'static std::sync::atomic::AtomicBool,
+) {
     while running.load(std::sync::atomic::Ordering::Relaxed) {
         // 等待 USB 在线 (与原始二进制一致: 2s 轮询)
         while running.load(std::sync::atomic::Ordering::Relaxed)
-            && !batt_sysfs::read_usb_online().unwrap_or(false)
+            && match batt_sysfs::read_usb_online() {
+                Some(v) => !v,
+                None => true,
+            }
         {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }

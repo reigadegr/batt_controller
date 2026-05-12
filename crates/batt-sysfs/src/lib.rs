@@ -1,9 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::os::unix::io::RawFd;
 
-use libc::{
-    O_CLOEXEC, O_RDONLY, O_TRUNC, O_WRONLY, SEEK_SET, close, lseek, open, read, write,
-};
+use libc::{O_CLOEXEC, O_RDONLY, O_TRUNC, O_WRONLY, SEEK_SET, close, lseek, open, read, write};
 
 /* ------------------------------------------------------------------ */
 /* sysfs/proc 路径常量                                                 */

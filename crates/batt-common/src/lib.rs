@@ -10,7 +10,13 @@ static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
 fn get_log_file() -> Option<std::sync::MutexGuard<'static, Option<File>>> {
     let mut guard = LOG_FILE.lock().ok()?;
     if guard.is_none() {
-        *guard = Some(OpenOptions::new().create(true).append(true).open(LOG_PATH).ok()?);
+        *guard = Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(LOG_PATH)
+                .ok()?,
+        );
     }
     Some(guard)
 }
@@ -18,11 +24,10 @@ fn get_log_file() -> Option<std::sync::MutexGuard<'static, Option<File>>> {
 /// 返回格式化时间戳字符串 "[YYYY-MM-DD-HH:MM:SS]"
 #[must_use]
 pub fn get_timestamp() -> String {
-    let epoch = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .cast_signed();
+    let epoch = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => d.as_secs().cast_signed(),
+        Err(_) => 0,
+    };
 
     let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
     unsafe { libc::localtime_r(&raw const epoch, tm.as_mut_ptr()) };

@@ -38,19 +38,22 @@ unsafe fn setup_signals() {
 /* ------------------------------------------------------------------ */
 
 fn load_config() -> BattConfig {
-    BattConfig::parse(CONFIG_PATH).unwrap_or_else(|_| BattConfig {
-        enabled: 1,
-        adjust_step: 50,
-        inc_step: 100,
-        ufcs_max: 9100,
-        pps_max: 5000,
-        loop_interval_ms: 2000,
-        restart_rise_step: 50,
-        depol_pulse_ma: 500,
-        depol_zero_ma: 0,
-        depol_neg_step: 150,
-        ..Default::default()
-    })
+    match BattConfig::parse(CONFIG_PATH) {
+        Ok(cfg) => cfg,
+        Err(_) => BattConfig {
+            enabled: 1,
+            adjust_step: 50,
+            inc_step: 100,
+            ufcs_max: 9100,
+            pps_max: 5000,
+            loop_interval_ms: 2000,
+            restart_rise_step: 50,
+            depol_pulse_ma: 500,
+            depol_zero_ma: 0,
+            depol_neg_step: 150,
+            ..Default::default()
+        },
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -92,11 +95,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .name("charging".into())
         .spawn(move || {
             // 从共享状态取出 config 的快照（避免长期持有 Mutex 锁）
-            let cfg_snapshot = state_chg
-                .config
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
+            let cfg_snapshot = match state_chg.config.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            }
+            .clone();
             charging_thread_wrapper(&cfg_snapshot, state_chg.running);
         })
         .map_err(|e| format!("spawn charging: {e}"))?;

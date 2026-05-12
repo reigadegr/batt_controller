@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use batt_common::{get_timestamp, log_write};
 
+use crate::ChargePhase;
 use crate::charging::{choose_protocol, clamp_max_ma, dumpsys_reset, read_voters_3x};
 use crate::loop_::LoopCtx;
-use crate::ChargePhase;
 
 /// 默认 UFCS 重置延迟秒数
 const DEFAULT_UFCS_RESET_DELAY: i32 = 10;

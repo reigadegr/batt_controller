@@ -13,14 +13,14 @@ pub fn sleep_or_stop(c: &LoopCtx<'_>, ms: u64) -> bool {
     true
 }
 
-mod cycle;
 mod cv;
+mod cycle;
 mod depol;
 mod rise;
 mod tc;
 
-pub use cycle::handle_cycle_end;
 pub use cv::exec_cv;
+pub use cycle::handle_cycle_end;
 pub use depol::exec_depol;
 pub use rise::exec_rise;
 pub use tc::exec_tc;
