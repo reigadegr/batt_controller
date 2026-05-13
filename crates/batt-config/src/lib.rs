@@ -2,7 +2,7 @@ pub const TEMP_RANGE_MAX: usize = 5;
 pub const CV_STEP_MAX: usize = 8;
 pub const CONFIG_PATH: &str = "/data/opbatt/batt_control";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BattConfig {
     // 温控
     pub temp_range: [i32; TEMP_RANGE_MAX],
@@ -87,51 +87,6 @@ fn parse_int_array(val: &str, arr: &mut [i32]) -> usize {
 /// 从 key=value 行中提取 value（精确键匹配）
 fn extract_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     line.strip_prefix(key)?.strip_prefix('=')
-}
-
-impl Default for BattConfig {
-    fn default() -> Self {
-        Self {
-            temp_range: [0; TEMP_RANGE_MAX],
-            temp_range_count: 0,
-            temp_curr_offset: [0; TEMP_RANGE_MAX],
-            temp_curr_offset_count: 0,
-            adjust_step: 0,
-            inc_step: 0,
-            dec_step: 0,
-            max_ufcs_chg_reset_cc: 0,
-            ufcs_reset_delay: 0,
-            ufcs_max: 0,
-            pps_max: 0,
-            cable_override: 0,
-            ufcs_soc_mon: [0; 2],
-            ufcs_interval_ms: [0; 2],
-            pps_soc_mon: [0; 2],
-            pps_interval_ms: [0; 2],
-            loop_interval_ms: 0,
-            batt_vol_thr: [0; 2],
-            batt_vol_soc: [0; 2],
-            batt_con_soc: 0,
-            rise_quickstep_thr_mv: 0,
-            rise_wait_thr_mv: 0,
-            cv_vol_mv: 0,
-            cv_max_ma: 0,
-            cv_step_mv: [0; CV_STEP_MAX],
-            cv_step_ma: [0; CV_STEP_MAX],
-            cv_step_count: 0,
-            tc_vol_thr_mv: 0,
-            tc_thr_soc: 0,
-            tc_full_ma: 0,
-            tc_vol_full_mv: 0,
-            curr_inc_wait_cycles: 0,
-            batt_full_thr_mv: 0,
-            restart_rise_step: 0,
-            depol_pulse_ma: 0,
-            depol_zero_ma: 0,
-            depol_neg_step: 0,
-            enabled: 0,
-        }
-    }
 }
 
 impl BattConfig {

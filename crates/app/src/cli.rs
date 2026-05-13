@@ -6,9 +6,10 @@ use batt_sysfs::{SysfsFds, read_int, write_int, write_proc_int, write_proc_str};
 /* CLI 运行模式                                                        */
 /* ------------------------------------------------------------------ */
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CliMode {
     /// `--service` / `-S`: 进入服务模式 (默认)
+    #[default]
     Service,
     /// `-c <mA>`: 设置 BCC 充电电流
     Charge,
@@ -40,21 +41,11 @@ pub enum CliMode {
 /* CLI 解析结果                                                        */
 /* ------------------------------------------------------------------ */
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CliArgs {
     pub mode: CliMode,
     pub value: i32,
     pub model: String,
-}
-
-impl Default for CliArgs {
-    fn default() -> Self {
-        Self {
-            mode: CliMode::Service,
-            value: 0,
-            model: String::new(),
-        }
-    }
 }
 
 /* ------------------------------------------------------------------ */

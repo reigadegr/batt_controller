@@ -70,24 +70,22 @@ pub fn exec_rise(c: &mut LoopCtx<'_>) {
         return;
     }
 
-    let step;
     if (1..=4).contains(&c.ramp_idx) {
         // 斜坡阶段: 剩余距离除法
         let remaining = c.cable_max - c.current_ma;
         let divisor = if c.ramp_idx == 1 { 17 } else { 11 };
-        step = (remaining + divisor / 2) / divisor;
-        let mut step = ((step + 25) / 50) * 50;
+        let raw = (remaining + divisor / 2) / divisor;
+        let mut step = ((raw + 25) / 50) * 50;
         if step > c.inc_step {
             step = c.inc_step;
         }
         c.current_ma += step;
     } else if c.cfg.adjust_step > 0 && (5..=6).contains(&c.ramp_idx) {
         // 微调过渡: adjust_step (strace 确认 2 步)
-        step = c.cfg.adjust_step;
-        c.current_ma += step;
+        c.current_ma += c.cfg.adjust_step;
     } else {
         // 全速步进: cable_max / 10
-        step = if c.cable_max > 0 {
+        let step = if c.cable_max > 0 {
             c.cable_max / 10
         } else {
             c.inc_step
