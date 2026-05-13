@@ -35,21 +35,17 @@ pub fn handle_cycle_end(c: &mut LoopCtx<'_>) -> bool {
     c.restart_count += 1;
     if c.cfg.max_ufcs_chg_reset_cc > 0 && c.restart_count > c.cfg.max_ufcs_chg_reset_cc {
         let ts = get_timestamp();
-        log_write(&format!(
-            "{ts} ==== Reset limit reached ({}/{}) delay {}s ====\n",
-            c.restart_count,
-            c.cfg.max_ufcs_chg_reset_cc,
-            if c.cfg.ufcs_reset_delay > 0 {
-                c.cfg.ufcs_reset_delay
-            } else {
-                DEFAULT_UFCS_RESET_DELAY
-            }
-        ));
         let delay = if c.cfg.ufcs_reset_delay > 0 {
             c.cfg.ufcs_reset_delay
         } else {
             DEFAULT_UFCS_RESET_DELAY
         };
+        log_write(&format!(
+            "{ts} ==== Reset limit reached ({}/{}) delay {}s ====\n",
+            c.restart_count,
+            c.cfg.max_ufcs_chg_reset_cc,
+            delay
+        ));
         let delay_ms = if c.cfg.loop_interval_ms > 0 {
             c.cfg.loop_interval_ms
         } else {
